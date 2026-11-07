@@ -1,6 +1,6 @@
 ---
 name: chat-share-reader
-description: 把 AI 对话的公开分享链接抓成本地 markdown，保留表格、代码块、行内标记与每条消息的时间。覆盖 ChatGPT、Claude、Gemini、Grok、Perplexity、DeepSeek、Kimi、Qwen、WorkBuddy 九站。需要把别人发来的对话链接、或自己分享出去的对话存档时使用。
+description: 把 AI 对话抓成本地 markdown，两个入口：公开分享链接（ChatGPT、Claude、Gemini、Grok、Perplexity、DeepSeek、Kimi、Qwen、WorkBuddy 九站），和本机会话文件（Claude Code、Codex CLI）。保留表格、代码块与消息时间。需要存档别人发来的对话、搜索自己的历史会话、或把上一轮对话的上下文喂给当前 agent 时使用。
 triggers:
 - 抓 AI 聊天记录
 - 保存分享链接
@@ -20,23 +20,25 @@ triggers:
 
 # chat-share-reader
 
-把分享链接变成可读的 markdown。多数 agent 拿到这类链接只会抓 HTML，结果是空壳、Cloudflare 挑战页或 iframe 框架，三种都是 HTTP 200，不看内容会以为成功了。
-
-## 用法
+两个入口，解决同一件事的两半：**别人发来的分享链接**，和**你自己机器上的会话记录**。
 
 ```bash
-node scripts/read.mjs <url> [更多 url...] [--out DIR] [--stdout] [--json] [--no-vendor]
+# 分享链接（九个站点）
+node scripts/read.mjs <url> [更多 url...] [--out DIR] [--stdout] [--json]
+
+# 本地会话（Claude Code / Codex）
+node scripts/sessions.mjs list [--source claude|codex|all] [--limit 20]
+node scripts/sessions.mjs search <关键词>
+node scripts/sessions.mjs export <id 前缀或路径> [--stdout] [--full]
 ```
 
-```bash
-node scripts/read.mjs https://chatgpt.com/share/xxxx
-node scripts/read.mjs url1 url2 --out ./exports
-node scripts/read.mjs https://claude.ai/share/xxxx --stdout
-```
+典型用法：`sessions.mjs export <id> --stdout` 接管道，把上一轮会话的上下文喂给当前的 agent。
+
+## 分享链接
 
 默认写到 `./chat-shares/<标题>.md`。`--stdout` 直接打印，`--json` 给结构化结果，`--no-vendor` 强制跳过 Convolvger（调试用）。多个链接一次跑完，单条失败不影响其他条。
 
-## 三个通道，按站点分流
+### 三个通道，按站点分流
 
 | 通道 | 站点 | 依赖 |
 | --- | --- | --- |
@@ -67,11 +69,31 @@ cdp 后端首次访问有 Cloudflare 挑战的站点时会打印提示，等你�
 
 各站接口细节、数据结构、失败形态见 `references/sites.md`。加站点的方法见 `README.md`。
 
+## 本地会话
+
+分享链接只覆盖别人发来的对话。自己机器上的记录走 `sessions.mjs`，不依赖网络，不需要任何后端。
+
+| 来源 | 位置 |
+| --- | --- |
+| Claude Code | `~/.claude/projects/<项目>/<sessionId>.jsonl` |
+| Codex CLI | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` |
+
+```bash
+node scripts/sessions.mjs list --limit 20            # 按修改时间倒序
+node scripts/sessions.mjs search "关键词"             # 全文搜，给上下文片段
+node scripts/sessions.mjs export 01a1af92 --stdout   # id 前缀匹配
+node scripts/sessions.mjs export <路径> --full        # 带上思考与工具调用
+```
+
+两个口径坑，代码里已处理，改解析器前先看：
+
+1. **Claude Code** 一个文件里混着 attachment、api-request、cost-state、queue-operation 等运行期事件，只取 `type: user|assistant`。子代理消息带 `isSidechain: true`，默认跳过。
+2. **Codex** 不要用 `response_item/message`，那里混着 `role: developer` 的系统提示和记忆注入，几千字的内部指令会被当成对话。正文在 `event_msg/item_completed` 的 `item.type === UserMessage|AgentMessage`。
+
 ## 已知边界
 
 - 只对公开分享有效，私有分享拿不到。
 - Perplexity 一次最多 20 轮，`has_next_page` 为真说明还有后续页。
-- 本地会话文件（Claude Code 的 `~/.claude/projects/*.jsonl`、Codex 的 `~/.codex/sessions/`）不在本 skill 范围内，那是另一条路径。
 - 各站接口都是前端自用的私有接口，改版就断。
 
 ## 调研过，别重复找

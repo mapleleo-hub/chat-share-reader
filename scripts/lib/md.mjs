@@ -25,6 +25,26 @@ export function safeName(s) {
     .slice(0, 80);
 }
 
+// 正文里的标题降两级。消息本身占 h2，正文里的 h1/h2 如果原样保留，
+// 会和角色标题同级甚至更高，整篇大纲就乱了。围栏代码块内的 # 不动。
+export function demoteHeadings(text) {
+  const lines = String(text).split('\n');
+  let fence = false;
+  return lines
+    .map((line) => {
+      if (/^\s*```/.test(line)) {
+        fence = !fence;
+        return line;
+      }
+      if (fence) return line;
+      const m = line.match(/^(#{1,6})\s+/);
+      if (!m) return line;
+      const level = Math.min(m[1].length + 2, 6);
+      return '#'.repeat(level) + line.slice(m[1].length);
+    })
+    .join('\n');
+}
+
 export function buildDoc({ title, url, source, channel, messages, note }) {
   const chars = messages.reduce((n, m) => n + m.body.length, 0);
   const lines = [`# ${title}`, ''];
@@ -40,7 +60,7 @@ export function buildDoc({ title, url, source, channel, messages, note }) {
     lines.push('');
     lines.push(`## ${m.role}${m.time ? ' · ' + m.time : ''}`);
     lines.push('');
-    lines.push(m.body.trim());
+    lines.push(demoteHeadings(m.body.trim()));
   }
   return lines.join('\n') + '\n';
 }

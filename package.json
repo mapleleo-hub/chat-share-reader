@@ -4,7 +4,8 @@
   "description": "把 AI 对话的公开分享链接抓成本地 markdown，覆盖 ChatGPT / Claude / Gemini / Grok / Perplexity / DeepSeek / Kimi / Qwen / WorkBuddy",
   "type": "module",
   "bin": {
-    "chat-share-reader": "scripts/read.mjs"
+    "chat-share-reader": "scripts/read.mjs",
+    "chat-sessions": "scripts/sessions.mjs"
   },
   "engines": {
     "node": ">=22"

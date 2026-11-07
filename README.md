@@ -84,6 +84,30 @@ node scripts/read.mjs https://claude.ai/share/xxxx --stdout
 | `CSR_PROFILE` | CDP 后端的 Chrome profile 目录 |
 | `CSR_PORT` | CDP 调试端口，默认 9333 |
 
+## 本地会话
+
+分享链接只覆盖别人发来的对话。你自己机器上的会话记录是另一条路径，用 `sessions.mjs`：
+
+```bash
+node scripts/sessions.mjs list                          # 最近的会话
+node scripts/sessions.mjs list --source codex --limit 10
+node scripts/sessions.mjs search "架构"                  # 全文搜
+node scripts/sessions.mjs export 01a1af92 --stdout       # 按 id 前缀导出到标准输出
+node scripts/sessions.mjs export 01a1af92 --full         # 带上思考与工具调用
+```
+
+| 来源 | 位置 |
+| --- | --- |
+| Claude Code | `~/.claude/projects/<项目>/<sessionId>.jsonl` |
+| Codex CLI | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` |
+
+`--stdout` 输出可以直接管道给另一个 agent，用来「把那次对话的上下文带过来」。
+
+两个口径上的坑，代码里已经处理：
+
+- Claude Code 的同一文件里混着 attachment、api-request、cost-state 等运行期事件，只取 `type: user|assistant`。子代理消息带 `isSidechain: true`，默认跳过，否则主对话会被子任务往返淹没。
+- Codex 不要用 `response_item/message`，那里含 role 为 `developer` 的系统提示和记忆注入，是几千字的内部指令。正文在 `event_msg/item_completed` 的 `item.type === UserMessage|AgentMessage` 里。
+
 ## 已知限制
 
 - 只对**公开分享**有效。需要登录态的私有分享拿不到。
