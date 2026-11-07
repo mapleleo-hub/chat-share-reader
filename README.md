@@ -96,16 +96,15 @@ node scripts/sessions.mjs export 01a1af92 --stdout       # 按 id 前缀导出�
 node scripts/sessions.mjs export 01a1af92 --full         # 带上思考与工具调用
 ```
 
-| 来源 | 位置 | 形态 |
-| --- | --- | --- |
-| Claude Code | `~/.claude/projects/<项目>/<sessionId>.jsonl` | JSONL |
-| Codex CLI | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | JSONL |
-| pi | `~/.pi/agent/sessions/<项目>/*.jsonl` | JSONL |
-| Oh My Pi | `~/.omp/agent/sessions/<项目>/*.jsonl` | JSONL |
-| Cursor | `%APPDATA%/Cursor/User/globalStorage/state.vscdb` | SQLite |
-| zcode | `~/.zcode/cli/db/db.sqlite` | SQLite |
+支持 15 个源，`node scripts/sessions.mjs sources` 会列出本机哪些可用。
 
-`node scripts/sessions.mjs sources` 会列出本机每个源是否可用以及具体路径。
+实测通过（本机有真实会话）：
+Claude Code、Codex CLI、pi、Oh My Pi、Cursor、zcode、opencode。
+
+按上游格式实现（本机没跑过对话，未实测）：
+Gemini CLI、Qwen Code、Cline、Copilot CLI、Command Code、Kimi Code、Antigravity、Hermes。
+
+每个源的路径、格式与解析要点见 [`references/sessions.md`](references/sessions.md)。路径和格式的依据是 deja-vu 的 registry（社区对上游输出的观测记录）。
 
 `--stdout` 输出可以直接管道给另一个 agent，用来「把那次对话的上下文带过来」。
 

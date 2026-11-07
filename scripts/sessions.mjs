@@ -17,6 +17,12 @@ import * as codexLocal from './lib/local/codex.mjs';
 import * as piLocal from './lib/local/pi.mjs';
 import * as cursorLocal from './lib/local/cursor.mjs';
 import * as zcodeLocal from './lib/local/zcode.mjs';
+import * as geminiCliLocal from './lib/local/gemini-cli.mjs';
+import * as qwenLocal from './lib/local/qwen.mjs';
+import * as clineLocal from './lib/local/cline.mjs';
+import * as opencodeLocal from './lib/local/opencode.mjs';
+import * as hermesLocal from './lib/local/hermes.mjs';
+import { makeParser } from './lib/local/jsonl-generic.mjs';
 import { buildDoc, safeName, normalizeMessages } from './lib/md.mjs';
 
 const home = os.homedir();
@@ -49,9 +55,63 @@ const SOURCES = {
   },
   cursor: { kind: 'sqlite', label: 'Cursor', parser: cursorLocal },
   zcode: { kind: 'sqlite', label: 'zcode', parser: zcodeLocal },
+  opencode: { kind: 'sqlite', label: 'opencode', parser: opencodeLocal },
+  hermes: { kind: 'sqlite', label: 'Hermes', parser: hermesLocal },
+
+  // 以下源的路径与格式取自 deja-vu 的 registry（社区观测记录），本机无可验证样本
+  'gemini-cli': {
+    kind: 'jsonl',
+    label: 'Gemini CLI',
+    root: path.join(home, '.gemini', 'tmp'),
+    filter: (f) => /[\\/]chats[\\/][^\\/]+\.jsonl?$/.test(f),
+    parser: geminiCliLocal,
+  },
+  qwen: {
+    kind: 'jsonl',
+    label: 'Qwen Code',
+    root: path.join(home, '.qwen', 'projects'),
+    filter: (f) => /[\\/]chats[\\/][^\\/]+\.jsonl$/.test(f),
+    parser: qwenLocal,
+  },
+  cline: {
+    kind: 'jsonl',
+    label: 'Cline',
+    root: path.join(home, '.cline', 'data', 'sessions'),
+    filter: (f) => /\.messages\.json$/.test(f),
+    refOf: (f) => ({ messagesFile: f, metaFile: f.replace(/\.messages\.json$/, '.json') }),
+    parser: clineLocal,
+  },
+  copilot: {
+    kind: 'jsonl',
+    label: 'Copilot CLI',
+    root: path.join(home, '.copilot', 'session-state'),
+    filter: (f) => /events\.jsonl$/.test(f),
+    parser: { parse: makeParser('Copilot') },
+  },
+  commandcode: {
+    kind: 'jsonl',
+    label: 'Command Code',
+    root: path.join(home, '.commandcode', 'projects'),
+    filter: (f) => /\.jsonl$/.test(f),
+    parser: { parse: makeParser('Command Code') },
+  },
+  kimi: {
+    kind: 'jsonl',
+    label: 'Kimi Code',
+    root: path.join(home, '.kimi-code', 'sessions'),
+    filter: (f) => /wire\.jsonl$/.test(f),
+    parser: { parse: makeParser('Kimi') },
+  },
+  antigravity: {
+    kind: 'jsonl',
+    label: 'Antigravity',
+    root: path.join(home, '.gemini'),
+    filter: (f) => /transcript\.jsonl$/.test(f),
+    parser: { parse: makeParser('Antigravity') },
+  },
 };
 
-async function walk(dir, out = []) {
+async function walk(dir, out = [], filter) {
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -60,8 +120,8 @@ async function walk(dir, out = []) {
   }
   for (const e of entries) {
     const p = path.join(dir, e.name);
-    if (e.isDirectory()) await walk(p, out);
-    else if (e.name.endsWith('.jsonl')) out.push(p);
+    if (e.isDirectory()) await walk(p, out, filter);
+    else if (filter ? filter(p) : e.name.endsWith('.jsonl')) out.push(p);
   }
   return out;
 }
@@ -156,7 +216,7 @@ async function discover(names, limit = 200) {
     }
 
     if (!existsSync(cfg.root)) continue;
-    for (const f of await walk(cfg.root)) {
+    for (const f of await walk(cfg.root, [], cfg.filter)) {
       let st;
       try {
         st = await stat(f);
@@ -169,7 +229,7 @@ async function discover(names, limit = 200) {
         id: idOfFile(f),
         time: st.mtimeMs,
         size: Math.round(st.size / 1024) + 'K',
-        ref: f,
+        ref: cfg.refOf ? cfg.refOf(f) : f,
         file: f,
       });
     }

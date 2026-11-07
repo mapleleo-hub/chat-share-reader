@@ -1,6 +1,6 @@
 ---
 name: chat-share-reader
-description: 把 AI 对话抓成本地 markdown，两个入口：公开分享链接（ChatGPT、Claude、Gemini、Grok、Perplexity、DeepSeek、Kimi、Qwen、WorkBuddy 九站），和本机会话文件（Claude Code、Codex CLI、pi、Oh My Pi、Cursor、zcode）。保留表格、代码块与消息时间。需要存档别人发来的对话、搜索自己的历史会话、或把上一轮对话的上下文喂给当前 agent 时使用。
+description: 把 AI 对话抓成本地 markdown，两个入口：公开分享链接（ChatGPT、Claude、Gemini、Grok、Perplexity、DeepSeek、Kimi、Qwen、WorkBuddy 九站），和本机会话文件（15 个源，覆盖 Claude Code、Codex、Cursor、opencode、Gemini CLI、Qwen Code、Cline、Copilot CLI、Kimi Code、Antigravity、Hermes 等）。保留表格、代码块与消息时间。需要存档别人发来的对话、搜索自己的历史会话、或把上一轮对话的上下文喂给当前 agent 时使用。
 triggers:
 - 抓 AI 聊天记录
 - 保存分享链接
@@ -26,7 +26,7 @@ triggers:
 # 分享链接（九个站点）
 node scripts/read.mjs <url> [更多 url...] [--out DIR] [--stdout] [--json]
 
-# 本地会话（Claude Code / Codex / pi / omp / Cursor / zcode）
+# 本地会话（15 个源）
 node scripts/sessions.mjs list [--source claude|codex|all] [--limit 20]
 node scripts/sessions.mjs search <关键词>
 node scripts/sessions.mjs export <id 前缀或路径> [--stdout] [--full]
@@ -73,16 +73,12 @@ cdp 后端首次访问有 Cloudflare 挑战的站点时会打印提示，等你�
 
 分享链接只覆盖别人发来的对话。自己机器上的记录走 `sessions.mjs`，不依赖网络，不需要任何后端。
 
-| 来源 | 位置 | 形态 |
-| --- | --- | --- |
-| Claude Code | `~/.claude/projects/<项目>/<sessionId>.jsonl` | JSONL |
-| Codex CLI | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | JSONL |
-| pi | `~/.pi/agent/sessions/<项目>/*.jsonl` | JSONL |
-| Oh My Pi | `~/.omp/agent/sessions/<项目>/*.jsonl` | JSONL |
-| Cursor | `%APPDATA%/Cursor/User/globalStorage/state.vscdb` | SQLite |
-| zcode | `~/.zcode/cli/db/db.sqlite` | SQLite |
-
 先跑 `node scripts/sessions.mjs sources` 看本机哪些源可用。
+
+实测通过：Claude Code、Codex CLI、pi、Oh My Pi、Cursor、zcode、opencode。
+按上游格式实现但本机未实测：Gemini CLI、Qwen Code、Cline、Copilot CLI、Command Code、Kimi Code、Antigravity、Hermes。
+
+各源路径、格式、字段映射见 `references/sessions.md`。
 
 ```bash
 node scripts/sessions.mjs list --limit 20            # 按修改时间倒序
