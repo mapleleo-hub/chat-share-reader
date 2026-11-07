@@ -1,136 +1,118 @@
 # chat-share-reader
 
-把 AI 对话的公开分享链接抓成本地 markdown。保留表格、代码块、行内标记和每条消息的时间，输出是接口返回的 markdown 原文，不是从渲染结果里重建的。
+把 AI 对话抓成本地 markdown。两种输入：别人发来的公开分享链接，和你自己机器上的会话文件。
 
-支持九个站点，其中五个不需要浏览器。
+抓的是各站分享页背后那套数据接口，不是从渲染结果里重建。表格、代码块、行内标记、每条消息的时间都保留原样。
 
-## 为什么需要它
+```bash
+npx skills add <owner>/chat-share-reader
+```
+
+## 解决什么
 
 拿一条 `claude.ai/share/...` 或 `chatgpt.com/share/...` 的链接，直接抓 HTML 会得到三种不同的失败：空壳、Cloudflare 挑战页、iframe 框架。三种都是 HTTP 200，不看内容会以为成功了。
 
-每个站的数据藏在不同地方，这个工具按站分流：
+每个站的数据藏在不同地方，这个工具按站分流。另外一半需求是反过来的：你想把上一轮某个会话的上下文带进当前对话，那部分数据就在你自己磁盘上。
+
+## 两个入口
+
+```bash
+# 分享链接
+node skills/chat-share-reader/scripts/read.mjs <url> [更多 url...] [--out DIR] [--stdout] [--json]
+
+# 本地会话
+node skills/chat-share-reader/scripts/sessions.mjs sources
+node skills/chat-share-reader/scripts/sessions.mjs list --limit 20
+node skills/chat-share-reader/scripts/sessions.mjs search "关键词"
+node skills/chat-share-reader/scripts/sessions.mjs export <id> --stdout
+```
+
+最后一个配管道最有用：把某次会话导出来，直接喂给当前的 agent。
+
+## 依赖
+
+只需要 **Node.js 22+**。其余都是可选的，缺了只是少几个站点。
+
+| 依赖 | 缺了会怎样 |
+| --- | --- |
+| Node 22+ | 跑不了（用到内置 `WebSocket` 和 `node:sqlite`） |
+| Chrome 或 Edge | Claude、Perplexity、Grok 三站不可用 |
+| Convolvger（Python 3.12+ 或 uv） | Gemini、DeepSeek、Kimi、Qwen 四站不可用 |
+
+零依赖就能用的部分：ChatGPT、WorkBuddy 两个分享站，加上 15 个本地会话源里的 JSONL 类（Claude Code、Codex、pi、Oh My Pi）。
+
+## 分享链接：九个站点
 
 | 站点 | 链接形态 | 通道 |
 | --- | --- | --- |
-| ChatGPT | `chatgpt.com/share/<uuid>` | HTTP，`backend-api/share` |
-| WorkBuddy | `workbuddy.link/p/<id>` | HTTP，页面内嵌 bootstrap 指向的 `conversation-data.json` |
-| Gemini | `gemini.google.com/share/<id>`、`share.gemini.google/<token>` | Convolvger（batchexecute RPC） |
+| ChatGPT | `chatgpt.com/share/<uuid>` | HTTP |
+| WorkBuddy | `workbuddy.link/p/<id>` | HTTP |
+| Gemini | `gemini.google.com/share/<id>` | Convolvger |
 | DeepSeek | `chat.deepseek.com/share/<id>` | Convolvger |
 | Kimi | `kimi.com/share/<id>` | Convolvger |
 | Qwen | `chat.qwen.ai/s/<id>` | Convolvger |
-| Claude | `claude.ai/share/<uuid>` | 浏览器，页面内 `fetch(/api/chat_snapshots/...)` |
-| Perplexity | `perplexity.ai/search/<uuid>` | 浏览器，页面内 `fetch(/rest/thread/...)` |
-| Grok | `grok.com/share/<id>` | 浏览器，渲染后取 DOM |
+| Claude | `claude.ai/share/<uuid>` | 浏览器 |
+| Perplexity | `perplexity.ai/search/<uuid>` | 浏览器 |
+| Grok | `grok.com/share/<id>` | 浏览器 |
 
-## 要求
+浏览器通道有两个实现，自动选：本机有 opencli 就用它，没有就用 Node 22 内置的 WebSocket 直连 Chrome 的 DevTools 协议，不装任何 npm 包。
 
-- **Node.js 22 或更高**。用到内置的 `WebSocket`，20 及以下跑不了 CDP 后端。
-- **Convolvger（可选，推荐）**。覆盖 Gemini / DeepSeek / Kimi / Qwen 四站。不装这四站不可用。
-
-  ```bash
-  uv tool install convolvger     # 需要 Python 3.12+
-  # 或者 pip install convolvger
-  # 或者完全不预装：装了 uv 的话，脚本会自动用 uvx convolvger
-  ```
-
-- **浏览器后端（可选）**。Claude / Perplexity / Grok 三站需要，二选一：
-  - **Chrome 或 Edge**：脚本自动拉起，零安装。首次访问有 Cloudflare 挑战的站点时，需要你在弹出的窗口里手动过一次验证，之后 cookie 存在持久 profile 里。
-  - **opencli**：如果你已经在用，设 `OPENCLI_BIN` 指过去，脚本优先用它。
-
-## 用法
+## 本地会话：15 个源
 
 ```bash
-node scripts/read.mjs <url> [更多 url...] [--out DIR] [--stdout] [--json] [--no-vendor]
+$ node skills/chat-share-reader/scripts/sessions.mjs sources
+claude      Claude Code  有目录    ~/.claude/projects
+codex       Codex CLI    有目录    ~/.codex/sessions
+opencode    opencode     可用      ~/.local/share/opencode/opencode.db
+cursor      Cursor       可用      %APPDATA%/Cursor/User/globalStorage/state.vscdb
+...
 ```
 
-```bash
-node scripts/read.mjs https://chatgpt.com/share/xxxx
-node scripts/read.mjs url1 url2 url3 --out ./exports
-node scripts/read.mjs https://claude.ai/share/xxxx --stdout
+实测通过（本机有真实会话）：Claude Code、Codex CLI、pi、Oh My Pi、Cursor、zcode、opencode。
+
+按上游格式实现（本机没跑过对话，未实测）：Gemini CLI、Qwen Code、Cline、Copilot CLI、Command Code、Kimi Code、Antigravity、Hermes。
+
+每个源的路径、格式、字段映射与已知坑见 [`skills/chat-share-reader/references/sessions.md`](skills/chat-share-reader/references/sessions.md)。
+
+## 输出示例
+
+```markdown
+# 询问是否安装 grill me
+
+- 来源：~/.local/share/opencode/opencode.db#ses_fd7dc2983ffe
+- 抓取通道：local/opencode
+- 消息条数：14
+- 字符数：2798
+
+## 用户 · 14:23
+
+你安装了 grill me 吗
+
+## opencode · 14:29
+
+没有。要装的话我可以帮你跑安装命令……
 ```
 
-| 参数 | 作用 |
-| --- | --- |
-| `--out DIR` | 输出目录，默认 `./chat-shares` |
-| `--stdout` | 打印到标准输出，不落盘 |
-| `--json` | 输出结构化结果，给上层脚本消费 |
-| `--no-vendor` | 跳过 Convolvger，强制用自己的实现（调试用） |
-
-文件名取对话标题，重名时自动加 share id 后缀（DeepSeek 所有分享的标题都是 `Shared Conversation`，不处理会互相覆盖）。
-
-## 配置
-
-路径和端口不写死在代码里。可选配置文件 `~/.chat-share-reader/config.json`：
-
-```json
-{
-  "backend": "auto",
-  "convolvgerBin": "/usr/local/bin/convolvger",
-  "opencliBin": "~/bin/opencli",
-  "chromeBin": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "profile": "~/.chat-share-reader/chrome-profile",
-  "port": 9333
-}
-```
-
-用 `CSR_CONFIG` 指向别处的配置文件。环境变量优先级更高：
-
-| 变量 | 作用 |
-| --- | --- |
-| `CSR_BACKEND` | `auto` / `opencli` / `cdp` |
-| `CONVOLVGER_BIN` | Convolvger 可执行文件 |
-| `OPENCLI_BIN` | opencli 可执行文件 |
-| `CHROME_BIN` | Chrome / Edge 路径 |
-| `CSR_PROFILE` | CDP 后端的 Chrome profile 目录 |
-| `CSR_PORT` | CDP 调试端口，默认 9333 |
-
-## 本地会话
-
-分享链接只覆盖别人发来的对话。你自己机器上的会话记录是另一条路径，用 `sessions.mjs`：
-
-```bash
-node scripts/sessions.mjs list                          # 最近的会话
-node scripts/sessions.mjs list --source codex --limit 10
-node scripts/sessions.mjs search "架构"                  # 全文搜
-node scripts/sessions.mjs export 01a1af92 --stdout       # 按 id 前缀导出到标准输出
-node scripts/sessions.mjs export 01a1af92 --full         # 带上思考与工具调用
-```
-
-支持 15 个源，`node scripts/sessions.mjs sources` 会列出本机哪些可用。
-
-实测通过（本机有真实会话）：
-Claude Code、Codex CLI、pi、Oh My Pi、Cursor、zcode、opencode。
-
-按上游格式实现（本机没跑过对话，未实测）：
-Gemini CLI、Qwen Code、Cline、Copilot CLI、Command Code、Kimi Code、Antigravity、Hermes。
-
-每个源的路径、格式与解析要点见 [`references/sessions.md`](references/sessions.md)。路径和格式的依据是 deja-vu 的 registry（社区对上游输出的观测记录）。
-
-`--stdout` 输出可以直接管道给另一个 agent，用来「把那次对话的上下文带过来」。
-
-各源口径上的坑，代码里已处理：
-
-- **Claude Code**：同一文件里混着 attachment、api-request、cost-state 等运行期事件，只取 `type: user|assistant`。子代理消息带 `isSidechain: true`，默认跳过。
-- **Codex**：不要用 `response_item/message`，那里含 `role: developer` 的系统提示和记忆注入。正文在 `event_msg/item_completed` 的 `item.type === UserMessage|AgentMessage`。
-- **pi / Oh My Pi**：两者格式同源，对话在 `type: message`，`message.role` 为 system 的要跳过。omp 另有 `type: title` 直接存标题，优先用。
-- **Cursor**：存在 SQLite 的 `cursorDiskKV` 表，key 是 `composerData:<uuid>`，正文在 `conversation[].text`，`type` 1 是用户、2 是助手。不需要去 `bubbleId:` 那批行取，实测那些行大多不存在。
-- **zcode**：`session` / `message` / `part` 三表，`message.data.role` 区分角色，正文是 `part.data.type === "text"` 的拼接。
-
-SQLite 用 Node 22 内置的 `node:sqlite`，只读打开，不装任何依赖。
+正文里的标题会自动降两级，保证「角色」这一层的层级不被淹没。
 
 ## 已知限制
 
-- 只对**公开分享**有效。需要登录态的私有分享拿不到。
-- **Cloudflare 是时段性拦截，不是 cookie 问题**。同一台机器可能这一小时全站被拦、下一小时自行恢复。遇到就等一会儿，调 UA 和 headers 没用。
-- Grok 的浏览器页面和接口是两套 CF 判定：页面能打开时，无 cookie 请求接口仍然 403，所以它只能走渲染。
-- Perplexity 一次最多拿 20 轮，`has_next_page` 为真时说明还有后续。
-- 各站的接口都是前端自用的私有接口，不是对外承诺的 API，改版就断。断了看 `references/sites.md` 里的结构说明。
+- 只对公开分享有效，私有分享拿不到。
+- Cloudflare 是时段性拦截，不是 cookie 问题。同一台机器可能这一小时全站被拦、下一小时自行恢复。遇到就等一会儿，调 UA 没用。
+- 首次访问有 Cloudflare 挑战的站点（Perplexity、Grok）需要在弹出的浏览器窗口里手动过一次验证，之后 cookie 存在持久 profile 里。
+- Perplexity 一次最多 20 轮。
+- 各站接口都是前端自用的私有接口，不是对外承诺的 API，改版就断。
+- Windsurf / Devin Desktop 的会话是加密 protobuf，JetBrains AI Assistant 藏在 base64 JSON 里，这两类不支持。
 
 ## 加站点
 
-`scripts/sites/` 下一个模块，导出 `name`、`channel`、`match(url)`、`read(url, { session })`，登记进 `scripts/read.mjs` 的 `SITES` 数组。
+`skills/chat-share-reader/scripts/sites/` 下一个模块，导出 `name`、`channel`、`match(url)`、`read(url, { session })`，登记进 `read.mjs` 的 `SITES` 数组。本地会话源放在 `scripts/lib/local/`，登记进 `sessions.mjs` 的 `SOURCES`。
 
-`read` 返回 `{ title, messages: [{role, time, body}], source, note }`，`body` 必须是 markdown 原文。需要浏览器的模块加 `export const useVendor = true` 表示允许先试 Convolvger。
+## 调研过，别重复找
+
+- **Convolvger**（PyPI `convolvger`）：8 个 provider，本地优先，无 cookie 无 API key。Gemini、DeepSeek、Kimi、Qwen 四站直接交给它。
+- **csctf**（`Dicklesworthstone/chat_shared_conversation_to_file`）：Bun + Playwright，4 个 provider，走 DOM 重建，Claude 那条要重启 Chrome。未采用。
+- **deja-vu**（`vshulcz/deja-vu`）：43 个 agent 的会话格式登记表，本地会话源的路径与格式大量参考了它。
 
 ## 许可
 

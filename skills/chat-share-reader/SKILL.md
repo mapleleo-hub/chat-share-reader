@@ -1,6 +1,18 @@
 ---
 name: chat-share-reader
-description: 把 AI 对话抓成本地 markdown，两个入口：公开分享链接（ChatGPT、Claude、Gemini、Grok、Perplexity、DeepSeek、Kimi、Qwen、WorkBuddy 九站），和本机会话文件（15 个源，覆盖 Claude Code、Codex、Cursor、opencode、Gemini CLI、Qwen Code、Cline、Copilot CLI、Kimi Code、Antigravity、Hermes 等）。保留表格、代码块与消息时间。需要存档别人发来的对话、搜索自己的历史会话、或把上一轮对话的上下文喂给当前 agent 时使用。
+description: 把 AI 对话抓成本地 markdown，保留表格、代码块和每条消息的时间。两种输入：公开分享链接（ChatGPT、Claude、Gemini、Grok、Perplexity、DeepSeek、Kimi、Qwen、WorkBuddy），本机会话文件（Claude Code、Codex、Cursor、opencode、Gemini CLI、Qwen Code、Cline、Copilot CLI、Kimi Code、Antigravity、Hermes、pi、Oh My Pi、zcode）。用户要存档别人发来的对话链接、搜索自己过去的会话、或把上一轮对话的上下文带进当前对话时用。
+license: MIT
+metadata:
+  openclaw:
+    requires:
+      bins: ["node"]
+    optional:
+      bins: ["google-chrome", "convolvger"]
+  clawdbot:
+    requires:
+      bins: ["node"]
+    optional:
+      bins: ["google-chrome", "convolvger"]
 triggers:
 - 抓 AI 聊天记录
 - 保存分享链接
@@ -16,11 +28,16 @@ triggers:
 - deepseek 分享
 - workbuddy.link
 - 读聊天记录
+- 搜索历史会话
+- 导出 Claude Code 会话
+- 导出 Codex 会话
 ---
 
 # chat-share-reader
 
 两个入口，解决同一件事的两半：**别人发来的分享链接**，和**你自己机器上的会话记录**。
+
+只需要 Node 22。浏览器和 Python 都是可选的，只有部分站点用得上。
 
 ```bash
 # 分享链接（九个站点）
