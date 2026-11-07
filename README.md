@@ -4,9 +4,13 @@
 
 抓的是各站分享页背后那套数据接口，不是从渲染结果里重建。表格、代码块、行内标记、每条消息的时间都保留原样。
 
+[![skills.sh](https://img.shields.io/badge/skills.sh-listed-000)](https://www.skills.sh/mapleleo-hub/chat-share-reader)
+
 ```bash
-npx skills add <owner>/chat-share-reader
+npx skills add mapleleo-hub/chat-share-reader
 ```
+
+装完会自动链接到 Claude Code、Codex、Cursor、Gemini CLI、Cline、opencode、Copilot、Kimi Code、Antigravity、Hermes 等 19 个 agent。
 
 ## 解决什么
 
