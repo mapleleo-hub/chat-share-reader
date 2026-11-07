@@ -96,17 +96,28 @@ node scripts/sessions.mjs export 01a1af92 --stdout       # 按 id 前缀导出�
 node scripts/sessions.mjs export 01a1af92 --full         # 带上思考与工具调用
 ```
 
-| 来源 | 位置 |
-| --- | --- |
-| Claude Code | `~/.claude/projects/<项目>/<sessionId>.jsonl` |
-| Codex CLI | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` |
+| 来源 | 位置 | 形态 |
+| --- | --- | --- |
+| Claude Code | `~/.claude/projects/<项目>/<sessionId>.jsonl` | JSONL |
+| Codex CLI | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | JSONL |
+| pi | `~/.pi/agent/sessions/<项目>/*.jsonl` | JSONL |
+| Oh My Pi | `~/.omp/agent/sessions/<项目>/*.jsonl` | JSONL |
+| Cursor | `%APPDATA%/Cursor/User/globalStorage/state.vscdb` | SQLite |
+| zcode | `~/.zcode/cli/db/db.sqlite` | SQLite |
+
+`node scripts/sessions.mjs sources` 会列出本机每个源是否可用以及具体路径。
 
 `--stdout` 输出可以直接管道给另一个 agent，用来「把那次对话的上下文带过来」。
 
-两个口径上的坑，代码里已经处理：
+各源口径上的坑，代码里已处理：
 
-- Claude Code 的同一文件里混着 attachment、api-request、cost-state 等运行期事件，只取 `type: user|assistant`。子代理消息带 `isSidechain: true`，默认跳过，否则主对话会被子任务往返淹没。
-- Codex 不要用 `response_item/message`，那里含 role 为 `developer` 的系统提示和记忆注入，是几千字的内部指令。正文在 `event_msg/item_completed` 的 `item.type === UserMessage|AgentMessage` 里。
+- **Claude Code**：同一文件里混着 attachment、api-request、cost-state 等运行期事件，只取 `type: user|assistant`。子代理消息带 `isSidechain: true`，默认跳过。
+- **Codex**：不要用 `response_item/message`，那里含 `role: developer` 的系统提示和记忆注入。正文在 `event_msg/item_completed` 的 `item.type === UserMessage|AgentMessage`。
+- **pi / Oh My Pi**：两者格式同源，对话在 `type: message`，`message.role` 为 system 的要跳过。omp 另有 `type: title` 直接存标题，优先用。
+- **Cursor**：存在 SQLite 的 `cursorDiskKV` 表，key 是 `composerData:<uuid>`，正文在 `conversation[].text`，`type` 1 是用户、2 是助手。不需要去 `bubbleId:` 那批行取，实测那些行大多不存在。
+- **zcode**：`session` / `message` / `part` 三表，`message.data.role` 区分角色，正文是 `part.data.type === "text"` 的拼接。
+
+SQLite 用 Node 22 内置的 `node:sqlite`，只读打开，不装任何依赖。
 
 ## 已知限制
 

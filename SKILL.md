@@ -1,6 +1,6 @@
 ---
 name: chat-share-reader
-description: 把 AI 对话抓成本地 markdown，两个入口：公开分享链接（ChatGPT、Claude、Gemini、Grok、Perplexity、DeepSeek、Kimi、Qwen、WorkBuddy 九站），和本机会话文件（Claude Code、Codex CLI）。保留表格、代码块与消息时间。需要存档别人发来的对话、搜索自己的历史会话、或把上一轮对话的上下文喂给当前 agent 时使用。
+description: 把 AI 对话抓成本地 markdown，两个入口：公开分享链接（ChatGPT、Claude、Gemini、Grok、Perplexity、DeepSeek、Kimi、Qwen、WorkBuddy 九站），和本机会话文件（Claude Code、Codex CLI、pi、Oh My Pi、Cursor、zcode）。保留表格、代码块与消息时间。需要存档别人发来的对话、搜索自己的历史会话、或把上一轮对话的上下文喂给当前 agent 时使用。
 triggers:
 - 抓 AI 聊天记录
 - 保存分享链接
@@ -26,7 +26,7 @@ triggers:
 # 分享链接（九个站点）
 node scripts/read.mjs <url> [更多 url...] [--out DIR] [--stdout] [--json]
 
-# 本地会话（Claude Code / Codex）
+# 本地会话（Claude Code / Codex / pi / omp / Cursor / zcode）
 node scripts/sessions.mjs list [--source claude|codex|all] [--limit 20]
 node scripts/sessions.mjs search <关键词>
 node scripts/sessions.mjs export <id 前缀或路径> [--stdout] [--full]
@@ -73,10 +73,16 @@ cdp 后端首次访问有 Cloudflare 挑战的站点时会打印提示，等你�
 
 分享链接只覆盖别人发来的对话。自己机器上的记录走 `sessions.mjs`，不依赖网络，不需要任何后端。
 
-| 来源 | 位置 |
-| --- | --- |
-| Claude Code | `~/.claude/projects/<项目>/<sessionId>.jsonl` |
-| Codex CLI | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` |
+| 来源 | 位置 | 形态 |
+| --- | --- | --- |
+| Claude Code | `~/.claude/projects/<项目>/<sessionId>.jsonl` | JSONL |
+| Codex CLI | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | JSONL |
+| pi | `~/.pi/agent/sessions/<项目>/*.jsonl` | JSONL |
+| Oh My Pi | `~/.omp/agent/sessions/<项目>/*.jsonl` | JSONL |
+| Cursor | `%APPDATA%/Cursor/User/globalStorage/state.vscdb` | SQLite |
+| zcode | `~/.zcode/cli/db/db.sqlite` | SQLite |
+
+先跑 `node scripts/sessions.mjs sources` 看本机哪些源可用。
 
 ```bash
 node scripts/sessions.mjs list --limit 20            # 按修改时间倒序
@@ -85,10 +91,15 @@ node scripts/sessions.mjs export 01a1af92 --stdout   # id 前缀匹配
 node scripts/sessions.mjs export <路径> --full        # 带上思考与工具调用
 ```
 
-两个口径坑，代码里已处理，改解析器前先看：
+口径坑，代码里已处理，改解析器前先看：
 
-1. **Claude Code** 一个文件里混着 attachment、api-request、cost-state、queue-operation 等运行期事件，只取 `type: user|assistant`。子代理消息带 `isSidechain: true`，默认跳过。
-2. **Codex** 不要用 `response_item/message`，那里混着 `role: developer` 的系统提示和记忆注入，几千字的内部指令会被当成对话。正文在 `event_msg/item_completed` 的 `item.type === UserMessage|AgentMessage`。
+1. **Claude Code**：一个文件混着 attachment、api-request、cost-state 等运行期事件，只取 `type: user|assistant`。子代理消息带 `isSidechain: true`，默认跳过。
+2. **Codex**：不要用 `response_item/message`，那里混着 `role: developer` 的系统提示和记忆注入。正文在 `event_msg/item_completed` 的 `item.type === UserMessage|AgentMessage`。
+3. **pi / Oh My Pi**：格式同源，`type: message` 里 `message.role` 为 system 的要跳过，omp 的 `type: title` 直接就是标题。
+4. **Cursor**：SQLite 的 `cursorDiskKV` 表，key 为 `composerData:<uuid>`，正文在 `conversation[].text`（1=用户，2=助手）。
+5. **zcode**：`session` / `message` / `part` 三表，正文取 `part.data.type === "text"`。
+
+SQLite 走 Node 22 内置 `node:sqlite`，只读，无依赖。
 
 ## 已知边界
 
