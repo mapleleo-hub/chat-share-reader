@@ -1,0 +1,32 @@
+{
+  "name": "chat-share-reader",
+  "version": "0.1.0",
+  "description": "把 AI 对话的公开分享链接抓成本地 markdown，覆盖 ChatGPT / Claude / Gemini / Grok / Perplexity / DeepSeek / Kimi / Qwen / WorkBuddy",
+  "type": "module",
+  "bin": {
+    "chat-share-reader": "scripts/read.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node scripts/read.mjs"
+  },
+  "files": [
+    "SKILL.md",
+    "README.md",
+    "scripts",
+    "references"
+  ],
+  "keywords": [
+    "chatgpt",
+    "claude",
+    "gemini",
+    "grok",
+    "perplexity",
+    "markdown",
+    "export",
+    "agent-skill"
+  ],
+  "license": "MIT"
+}

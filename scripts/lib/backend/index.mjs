@@ -1,0 +1,46 @@
+// 后端选择。两个后端实现同一组方法：open / eval / waitReady / close。
+//
+// auto 的顺序：有 opencli 用 opencli（本机省事、复用已有登录态），否则用 CDP 拉真 Chrome。
+// 都没有就报错，并说明浏览器通道能做什么、纯 HTTP 通道还能跑哪些站。
+import { config } from '../config.mjs';
+import * as opencliBackend from './opencli.mjs';
+import * as cdpBackend from './cdp.mjs';
+
+export function describe() {
+  return {
+    opencli: opencliBackend.available() ? opencliBackend.findOpencli() : '',
+    chrome: cdpBackend.findChrome(),
+    profile: cdpBackend.defaultProfile(),
+  };
+}
+
+export async function createSession(opts = {}) {
+  const want = (process.env.CSR_BACKEND || opts.backend || config().backend || 'auto').toLowerCase();
+
+  if (want === 'opencli') {
+    return await opencliBackend.createSession(opts);
+  }
+  if (want === 'cdp') {
+    return await cdpBackend.createSession(opts);
+  }
+
+  if (opencliBackend.available()) {
+    try {
+      return await opencliBackend.createSession(opts);
+    } catch (e) {
+      if (!cdpBackend.available()) throw e;
+      // opencli 装了但连不上（扩展没开、daemon 挂了），退到 CDP
+      console.error('[提示] opencli 不可用，改用 CDP 后端：' + String(e.message).slice(0, 120));
+    }
+  }
+  if (cdpBackend.available()) {
+    return await cdpBackend.createSession(opts);
+  }
+
+  throw new Error(
+    '没有可用的浏览器后端。\n' +
+      '  方式一：装 opencli（Chrome 扩展 + CLI），设置 OPENCLI_BIN\n' +
+      '  方式二：装 Chrome 或 Edge，脚本会自动拉起（首次访问有 Cloudflare 挑战的站点时需要你手动过一次验证）\n' +
+      '  纯 HTTP 通道仍可用的站点：chatgpt.com / workbuddy.link / gemini / deepseek / kimi / qwen（后四个需 Convolvger）'
+  );
+}

@@ -1,0 +1,4 @@
+chat-shares/
+*.log
+node_modules/
+.chrome-profile/
