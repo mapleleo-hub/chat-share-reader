@@ -298,7 +298,7 @@ async function discover(names, limit = 200) {
           name,
           id: idOfFile(f),
           family: familyOfFile(f),
-          time: st.mtimeMs,
+          time: timeFromName(f) || st.mtimeMs,
           size: Math.round(st.size / 1024) + 'K',
           bytes: st.size,
           ref: cfg.refOf ? cfg.refOf(f) : f,
@@ -370,15 +370,12 @@ async function cmdList(opts, names) {
     );
   }
   if (!items.length) return console.log('没有找到任何会话');
-  let last = '';
+  // 按时间混排时同源不连续，分组标题会重复出现，改成每行带来源
   for (const x of items) {
-    if (x.name !== last) {
-      console.log('\n[' + SOURCES[x.name].label + ']');
-      last = x.name;
-    }
     const id = x.id ? String(x.id) : idOfFile(x.ref);
     const size = x.size || (x.count ? x.count + '条' : '');
-    console.log(`  ${fmtTime(x.time)}  ${String(size).padStart(7)}  ${id}  ${x.title || '(无标题)'}`);
+    const src = String(SOURCES[x.name].label || x.name).padEnd(11);
+    console.log(`${fmtTime(x.time)}  ${src} ${String(size).padStart(7)}  ${id}  ${x.title || '(无标题)'}`);
   }
 }
 
@@ -399,10 +396,24 @@ function snippet(text, keyword, span = 60) {
     .trim();
 }
 
+// 文件名里带 ISO 时间的源（codex 的 rollout-2026-10-05T22-24-13、pi 的 2026-11-01T13-34-07）
+// 优先用它，因为归档 .zst 的 mtime 是解压时间，按 mtime 排会把旧会话顶到最前。
+function timeFromName(file) {
+  const m = path.basename(file).match(/(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})/);
+  if (!m) return 0;
+  const t = new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}`).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+// Windows 上 cwd 存的是反斜杠，用户敲的可能是正斜杠，两边都归一化再比
+function normPath(p) {
+  return String(p || '').replace(/\\/g, '/').toLowerCase();
+}
+
 async function matchCwd(item, needle) {
-  const lower = String(needle).toLowerCase();
-  if (item.meta && String(item.meta.cwd || '').toLowerCase().includes(lower)) return true;
-  if (String(item.file || '').toLowerCase().includes(lower)) return true;
+  const lower = normPath(needle);
+  if (item.meta && normPath(item.meta.cwd).includes(lower)) return true;
+  if (normPath(item.file).includes(lower)) return true;
   // 路径里没写工作目录的源（codex/claude），读头几行的 cwd
   try {
     for await (const line of headLines(item.file, 5)) {
@@ -415,7 +426,7 @@ async function matchCwd(item, needle) {
         continue;
       }
       const cwd = (j.payload && j.payload.cwd) || j.cwd;
-      if (cwd) return String(cwd).toLowerCase().includes(lower);
+      if (cwd) return normPath(cwd).includes(lower);
     }
   } catch {
     /* 读不动就按不匹配处理 */
