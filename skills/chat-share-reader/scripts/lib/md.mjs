@@ -57,8 +57,10 @@ export function buildDoc({ title, url, source, channel, messages, note }) {
   lines.push('');
   if (note) lines.push(`> ${note}`, '');
   for (const m of messages) {
+    // 合并多个 rollout 分片时会跨天，只有 HH:MM 分不清先后，有 at 就上完整日期
+    const stamp = m.at ? fmtTime(m.at) : m.time;
     lines.push('');
-    lines.push(`## ${m.role}${m.time ? ' · ' + m.time : ''}`);
+    lines.push(`## ${m.role}${stamp ? ' · ' + stamp : ''}`);
     lines.push('');
     lines.push(demoteHeadings(m.body.trim()));
   }

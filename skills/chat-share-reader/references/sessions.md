@@ -12,7 +12,8 @@ deja-vu（`vshulcz/deja-vu`）是一份社区维护的格式登记表，覆盖 4
 | 源 | 路径 | 形态 | 关键点 |
 | --- | --- | --- | --- |
 | Claude Code | `~/.claude/projects/<项目>/<sessionId>.jsonl` | JSONL | 只取 `type: user\|assistant`；`isSidechain` 为子代理，跳过 |
-| Codex CLI | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | JSONL | 正文在 `event_msg/item_completed`，不要用 `response_item/message`（含 developer 系统提示） |
+| Codex CLI | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` + `~/.codex/archived_sessions/*.jsonl.zst` | JSONL / zstd | 正文在 `event_msg/item_completed`，不要用 `response_item/message`（含 developer 系统提示）；归档是 `.jsonl.zst`，读过的会被解压搬回 `sessions/`，两处都要扫；fork 分片按 `session_meta.session_id` 归组 |
+| WorkBuddy | `~/.workbuddy/projects/<工作区 slug>/<sessionId>.jsonl` | JSONL | 每行 `session-meta` 或 `message`，正文在 `content[].text`；用户消息前的 `<system-reminder>` 注入要整块剥掉；同级 `<sessionId>/tool-results/` 不是会话 |
 | pi | `~/.pi/agent/sessions/<项目>/*.jsonl` | JSONL | `type: message`，跳过 `role: system` |
 | Oh My Pi | `~/.omp/agent/sessions/<项目>/*.jsonl` | JSONL | 与 pi 同格式，另有 `type: title` 存标题 |
 | Cursor | `%APPDATA%/Cursor/User/globalStorage/state.vscdb` | SQLite | `cursorDiskKV` 表，key `composerData:<uuid>`，正文 `conversation[].text`（1=用户，2=助手） |
@@ -33,6 +34,13 @@ deja-vu（`vshulcz/deja-vu`）是一份社区维护的格式登记表，覆盖 4
 | Hermes | `~/.hermes/state.db` 或 `~/.hermes/profiles/<p>/state.db` | SQLite | 列名随版本变，运行时读 `pragma table_info` 猜列 |
 
 后四个（Copilot / Command Code / Kimi / Antigravity）共用 `lib/local/jsonl-generic.mjs`。它不硬编码字段名，逐行从 `role`/`type`/`author`/`sender` 里认角色，从 `content`/`text`/`message` 里取正文，认不出就跳过。真实跑出问题时的排查顺序：先 `--json` 看抓到几条，再去看原始 JSON 的实际字段名，然后在 `sessions.md` 补映射。
+
+## 压缩与分片
+
+两件事都不能靠文件名或原文判断，写在 `scripts/lib/local/zst.mjs` 与 `sessions.mjs` 里：
+
+- **压缩**：`.jsonl.zst` 直接用 `indexOf` 搜不到任何东西，`readFile` 得到乱码。走 `readText()` / `lines()`，内部优先用 Node 22 的 `zlib` zstd，不可用时 `spawn('zstd', ['-dc', file])`。大文件必须用 `lines()`，整体读会撞上 V8 的字符串上限。
+- **分片**：Codex 同一会话会有根 rollout 加若干 fork，文件名类似 `rollout-<时间>-<父线程>_<新线程>.jsonl`，`session_meta.session_id` 一律是父线程。归组看 session_meta，不看文件名；合并后按消息自带的 ISO 时间排，工具消息继承上一条的时间避免被甩到最前。
 
 ## 探测过但没有会话数据的
 

@@ -64,6 +64,7 @@ export async function parse(file, { full = false } = {}) {
     messages.push({
       role: role === 'user' ? '用户' : 'Claude',
       time: ev.timestamp ? String(ev.timestamp).slice(11, 16) : '',
+      at: ev.timestamp || '',
       body,
     });
 

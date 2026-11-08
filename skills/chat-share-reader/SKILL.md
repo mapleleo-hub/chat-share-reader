@@ -1,6 +1,6 @@
 ---
 name: chat-share-reader
-description: 把 AI 对话抓成本地 markdown，保留表格、代码块和每条消息的时间。两种输入：公开分享链接（ChatGPT、Claude、Gemini、Grok、Perplexity、DeepSeek、Kimi、Qwen、WorkBuddy），本机会话文件（Claude Code、Codex、Cursor、opencode、Gemini CLI、Qwen Code、Cline、Copilot CLI、Kimi Code、Antigravity、Hermes、pi、Oh My Pi、zcode）。用户要存档别人发来的对话链接、搜索自己过去的会话、或把上一轮对话的上下文带进当前对话时用。
+description: 把 AI 对话抓成本地 markdown，保留表格、代码块和每条消息的时间。两种输入：公开分享链接（ChatGPT、Claude、Gemini、Grok、Perplexity、DeepSeek、Kimi、Qwen、WorkBuddy），本机会话文件（Claude Code、Codex、WorkBuddy、Cursor、opencode、Gemini CLI、Qwen Code、Cline、Copilot CLI、Kimi Code、Antigravity、Hermes、pi、Oh My Pi、zcode）。支持被压缩成 .jsonl.zst 的归档会话，支持按工作目录筛会话、按线程合并 fork 分片。用户要存档别人发来的对话链接、搜索自己过去的会话、或把上一轮对话的上下文带进当前对话时用。
 license: MIT
 metadata:
   openclaw:
@@ -43,10 +43,10 @@ triggers:
 # 分享链接（九个站点）
 node scripts/read.mjs <url> [更多 url...] [--out DIR] [--stdout] [--json]
 
-# 本地会话（15 个源）
-node scripts/sessions.mjs list [--source claude|codex|all] [--limit 20]
-node scripts/sessions.mjs search <关键词>
-node scripts/sessions.mjs export <id 前缀或路径> [--stdout] [--full]
+# 本地会话（16 个源）
+node scripts/sessions.mjs list [--source claude|codex|workbuddy|all] [--limit 20] [--cwd 子串]
+node scripts/sessions.mjs search <关键词> [--limit 20] [--cwd 子串]
+node scripts/sessions.mjs export <id 前缀或路径> [--stdout] [--full] [--json]
 ```
 
 典型用法：`sessions.mjs export <id> --stdout` 接管道，把上一轮会话的上下文喂给当前的 agent。
@@ -92,25 +92,31 @@ cdp 后端首次访问有 Cloudflare 挑战的站点时会打印提示，等你�
 
 先跑 `node scripts/sessions.mjs sources` 看本机哪些源可用。
 
-实测通过：Claude Code、Codex CLI、pi、Oh My Pi、Cursor、zcode、opencode。
+实测通过：Claude Code、Codex CLI、WorkBuddy、pi、Oh My Pi、Cursor、zcode、opencode。
 按上游格式实现但本机未实测：Gemini CLI、Qwen Code、Cline、Copilot CLI、Command Code、Kimi Code、Antigravity、Hermes。
 
 各源路径、格式、字段映射见 `references/sessions.md`。
 
 ```bash
-node scripts/sessions.mjs list --limit 20            # 按修改时间倒序
-node scripts/sessions.mjs search "关键词"             # 全文搜，给上下文片段
-node scripts/sessions.mjs export 01a1af92 --stdout   # id 前缀匹配
-node scripts/sessions.mjs export <路径> --full        # 带上思考与工具调用
+node scripts/sessions.mjs list --limit 20             # 按修改时间倒序
+node scripts/sessions.mjs search "关键词"              # 只搜对话正文，不搜文件原文
+node scripts/sessions.mjs search "关键词" --cwd 项目名  # 先按工作目录筛，快很多
+node scripts/sessions.mjs export 01a1af92 --stdout    # id 前缀匹配，同线程分片自动合并
+node scripts/sessions.mjs export 01a1af92 --json      # 结构化，含 segments 与每条消息
+node scripts/sessions.mjs export <路径> --full         # 带上思考与工具调用
 ```
 
 口径坑，代码里已处理，改解析器前先看：
 
 1. **Claude Code**：一个文件混着 attachment、api-request、cost-state 等运行期事件，只取 `type: user|assistant`。子代理消息带 `isSidechain: true`，默认跳过。
-2. **Codex**：不要用 `response_item/message`，那里混着 `role: developer` 的系统提示和记忆注入。正文在 `event_msg/item_completed` 的 `item.type === UserMessage|AgentMessage`。
+2. **Codex**：不要用 `response_item/message`，那里混着 `role: developer` 的系统提示和记忆注入。正文在 `event_msg/item_completed` 的 `item.type === UserMessage|AgentMessage`。Codex 还会把内部上下文和浏览器审批 JSON 塞进同两个通道，`isInternal` 会滤掉。
 3. **pi / Oh My Pi**：格式同源，`type: message` 里 `message.role` 为 system 的要跳过，omp 的 `type: title` 直接就是标题。
 4. **Cursor**：SQLite 的 `cursorDiskKV` 表，key 为 `composerData:<uuid>`，正文在 `conversation[].text`（1=用户，2=助手）。
 5. **zcode**：`session` / `message` / `part` 三表，正文取 `part.data.type === "text"`。
+6. **压缩 rollout**：Codex 归档会话是 `archived_sessions/*.jsonl.zst`，且读过之后会被解压搬回 `sessions/`。`lib/local/zst.mjs` 透明解压（Node 22 的 zlib zstd，缺了回退系统 `zstd` 命令），两个目录都扫。直接 grep `.zst` 永远搜不到，别据此判断会话不存在。
+7. **fork 分片**：同一会话可能有十几个 `rollout-<时间>-<线程>_<分支>.jsonl`，分片名会用新 id，但 `session_meta.session_id` 仍是父线程的。`export` 按它归组、按消息时间排序、按角色加正文前缀去重。
+8. **WorkBuddy**：`~/.workbuddy/projects/<工作区 slug>/<sessionId>.jsonl`，同级 `<sessionId>/tool-results/` 要排除。每条用户消息前挂 `<system-reminder>` 包住的 user_info、identity 文件和自定义指令，必须整块剥掉，否则标题会变成 `<system-reminder`。
+9. **search 只匹配正文**：原文里一条记忆注入带过项目路径，就能让几十个无关会话命中。所以 search 要先 parse 成 messages 再匹配，不能对文件原文 `indexOf`。
 
 SQLite 走 Node 22 内置 `node:sqlite`，只读，无依赖。
 
@@ -119,6 +125,8 @@ SQLite 走 Node 22 内置 `node:sqlite`，只读，无依赖。
 - 只对公开分享有效，私有分享拿不到。
 - Perplexity 一次最多 20 轮，`has_next_page` 为真说明还有后续页。
 - 各站接口都是前端自用的私有接口，改版就断。
+- Codex 会自己收拾归档目录，压缩分片可能被合并或删掉。真要长期留档，先用 `export` 存成 markdown，别指望原始 rollout 一直在。
+- `search` 不带 `--cwd` 时要解析全部会话，本机约四千个文件十几秒。日常找项目相关的对话先加 `--cwd 项目名`。
 
 ## 调研过，别重复找
 

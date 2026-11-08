@@ -26,12 +26,15 @@ node skills/chat-share-reader/scripts/read.mjs <url> [更多 url...] [--out DIR]
 
 # 本地会话
 node skills/chat-share-reader/scripts/sessions.mjs sources
-node skills/chat-share-reader/scripts/sessions.mjs list --limit 20
-node skills/chat-share-reader/scripts/sessions.mjs search "关键词"
+node skills/chat-share-reader/scripts/sessions.mjs list --limit 20 --cwd 项目名
+node skills/chat-share-reader/scripts/sessions.mjs search "关键词" --cwd 项目名
 node skills/chat-share-reader/scripts/sessions.mjs export <id> --stdout
+node skills/chat-share-reader/scripts/sessions.mjs export <id> --json
 ```
 
 最后一个配管道最有用：把某次会话导出来，直接喂给当前的 agent。
+
+`search` 只匹配对话正文，不会因为系统提示或记忆注入里出现过某个词就误报。`export` 会把这个会话的所有 fork 分片按时间合并去重，压缩成 `.jsonl.zst` 的归档会话也能直接读。
 
 ## 依赖
 
@@ -43,7 +46,7 @@ node skills/chat-share-reader/scripts/sessions.mjs export <id> --stdout
 | Chrome 或 Edge | Claude、Perplexity、Grok 三站不可用 |
 | Convolvger（Python 3.12+ 或 uv） | Gemini、DeepSeek、Kimi、Qwen 四站不可用 |
 
-零依赖就能用的部分：ChatGPT、WorkBuddy 两个分享站，加上 15 个本地会话源里的 JSONL 类（Claude Code、Codex、pi、Oh My Pi）。
+零依赖就能用的部分：ChatGPT、WorkBuddy 两个分享站，加上 16 个本地会话源里的 JSONL 类（Claude Code、Codex、WorkBuddy、pi、Oh My Pi）。
 
 ## 分享链接：九个站点
 

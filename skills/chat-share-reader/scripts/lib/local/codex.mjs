@@ -5,32 +5,45 @@
 // item.type 为 UserMessage 或 AgentMessage。这是最干净的口径。
 //
 // 不要用 response_item/message：那里混着 role 为 developer 的系统提示和记忆注入，
-// 直接取会把几千字的内部指令当成对话内容。
-import { readFile } from 'node:fs/promises';
+// 直接取会把几千字的内部指令当成对话内容。搜关键词时尤其会踩：记忆里带一次项目
+// 路径，就能让几十个无关会话全部命中。
+//
+// 归档会话是 rollout-*.jsonl.zst，走 zst.mjs 透明解压；主会话可能有十几个 fork
+// 分片（文件名 `<thread>_<fork>.jsonl`），合并交给 sessions.mjs 的 export。
 import path from 'node:path';
+import { lines } from './zst.mjs';
 
 export const source = 'codex';
 
-export async function parse(file, { full = false } = {}) {
-  const raw = await readFile(file, 'utf8');
-  const events = [];
-  for (const line of raw.split('\n')) {
-    const s = line.trim();
-    if (!s) continue;
-    try {
-      events.push(JSON.parse(s));
-    } catch {
-      /* 忽略 */
-    }
-  }
+// Codex 会把内部上下文、浏览器审批请求塞进 UserMessage/AgentMessage 通道，
+// 它们不是用户说的话，留着会让搜索命中一堆 JSON 噪音。
+function isInternal(text) {
+  const t = text.trimStart();
+  return (
+    /^The following is the Codex agent history/i.test(t) ||
+    /^<in-app-browser-context/i.test(t) ||
+    /^\{"(risk_level|outcome|justification)"/.test(t)
+  );
+}
 
+export async function parse(file, { full = false } = {}) {
   const messages = [];
   let cwd = '';
   let sessionId = '';
   let model = '';
   let git = '';
 
-  for (const ev of events) {
+  for await (const line of lines(file)) {
+    const s = line.trim();
+    if (!s) continue;
+    let ev;
+    try {
+      ev = JSON.parse(s);
+    } catch {
+      /* 半行或损坏行跳过 */
+      continue;
+    }
+
     if (ev.type === 'session_meta' && ev.payload) {
       cwd = cwd || ev.payload.cwd || '';
       sessionId = sessionId || ev.payload.session_id || ev.payload.id || '';
@@ -53,9 +66,11 @@ export async function parse(file, { full = false } = {}) {
         .join('\n')
         .trim();
       if (!text) continue;
+      if (isInternal(text)) continue;
       messages.push({
         role: item.type === 'UserMessage' ? '用户' : 'Codex',
         time: ev.timestamp ? String(ev.timestamp).slice(11, 16) : '',
+        at: ev.timestamp || '',
         body: text,
       });
       continue;
@@ -88,7 +103,7 @@ export async function parse(file, { full = false } = {}) {
   }
 
   return {
-    title: titleOf(messages) || path.basename(file, '.jsonl'),
+    title: titleOf(messages) || path.basename(file).replace(/\.jsonl(\.zst)?$/, ''),
     messages,
     source: file,
     note: [model && 'provider ' + model, cwd && '目录 ' + cwd, git && '分支 ' + git]
@@ -99,7 +114,8 @@ export async function parse(file, { full = false } = {}) {
 }
 
 function titleOf(messages) {
-  const first = messages.find((m) => m.role === '用户');
+  // 子代理会话可能只有 AgentMessage，退到第一条有正文的
+  const first = messages.find((m) => m.role === '用户') || messages[0];
   if (!first) return '';
   return first.body
     .replace(/[#*`>\n]/g, ' ')
