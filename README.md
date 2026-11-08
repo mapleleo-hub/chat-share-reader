@@ -4,7 +4,7 @@
 
 抓的是各站分享页背后那套数据接口，不是从渲染结果里重建。表格、代码块、行内标记、每条消息的时间都保留原样。
 
-[![skills.sh](https://img.shields.io/badge/skills.sh-listed-000)](https://www.skills.sh/mapleleo-hub/chat-share-reader)
+[![install with skills CLI](https://img.shields.io/badge/install-npx%20skills%20add-black)](https://github.com/mapleleo-hub/chat-share-reader)
 
 ```bash
 npx skills add mapleleo-hub/chat-share-reader
