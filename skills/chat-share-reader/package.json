@@ -1,6 +1,6 @@
 {
   "name": "chat-share-reader",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "把 AI 对话的公开分享链接抓成本地 markdown，覆盖 ChatGPT / Claude / Gemini / Grok / Perplexity / DeepSeek / Kimi / Qwen / WorkBuddy",
   "type": "module",
   "bin": {
