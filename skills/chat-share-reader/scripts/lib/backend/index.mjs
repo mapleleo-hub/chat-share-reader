@@ -38,9 +38,12 @@ export async function createSession(opts = {}) {
   }
 
   throw new Error(
-    '没有可用的浏览器后端。\n' +
-      '  方式一：装 opencli（Chrome 扩展 + CLI），设置 OPENCLI_BIN\n' +
-      '  方式二：装 Chrome 或 Edge，脚本会自动拉起（首次访问有 Cloudflare 挑战的站点时需要你手动过一次验证）\n' +
-      '  纯 HTTP 通道仍可用的站点：chatgpt.com / workbuddy.link / gemini / deepseek / kimi / qwen（后四个需 Convolvger）'
+    'No browser backend available.\n' +
+      '  Option 1: install opencli (Chrome extension + CLI) and set OPENCLI_BIN\n' +
+      '  Option 2: install Chrome or Edge, the script launches it automatically\n' +
+      '  (first visit to a Cloudflare-protected site needs one manual check in the popup)\n' +
+      '  Sites that still work over plain HTTP: chatgpt.com / workbuddy.link\n' +
+      '没有可用的浏览器后端。装 opencli 并设 OPENCLI_BIN，或装 Chrome/Edge 让脚本自动拉起。\n' +
+      '纯 HTTP 通道仍可用的站点：chatgpt.com / workbuddy.link'
   );
 }

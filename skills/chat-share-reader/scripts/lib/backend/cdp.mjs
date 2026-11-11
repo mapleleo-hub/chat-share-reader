@@ -8,6 +8,7 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -57,6 +58,49 @@ export function defaultPort() {
   return Number(process.env.CSR_PORT || config().port || 9333);
 }
 
+// 探测端口状态：free 没人监听，chrome 是本插件的调试端点，busy 是别的程序占了
+function probePort(port, timeoutMs = 600) {
+  return new Promise((resolve) => {
+    const sock = net.connect({ port, host: '127.0.0.1' });
+    let done = false;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      sock.destroy();
+      resolve(v);
+    };
+    sock.once('connect', async () => {
+      // 能连上，看是不是 Chrome 的调试端口
+      try {
+        const r = await fetch(`http://127.0.0.1:${port}/json/version`, {
+          signal: AbortSignal.timeout(1200),
+        });
+        const j = await r.json();
+        finish(j && j.Browser ? 'chrome' : 'busy');
+      } catch {
+        finish('busy');
+      }
+    });
+    sock.once('error', (e) => finish(e.code === 'ECONNREFUSED' ? 'free' : 'busy'));
+    setTimeout(() => finish('busy'), timeoutMs);
+  });
+}
+
+// 从起始端口往后找一个能用的。被别的程序占住时不硬撞，直接换下一个
+async function pickPort(start, span = 20) {
+  for (let p = start; p < start + span; p++) {
+    const state = await probePort(p);
+    if (state === 'chrome') return { port: p, reuse: true };
+    if (state === 'free') return { port: p, reuse: false };
+    // busy：换个端口继续
+  }
+  throw new Error(
+    `Ports ${start}-${start + span - 1} are all taken.\n` +
+      `Set CSR_PORT to a free one, or close whatever is holding them.\n` +
+      `端口 ${start} 到 ${start + span - 1} 全被占用。用 CSR_PORT 指定空闲端口，或关掉占用它们的程序。`
+  );
+}
+
 async function waitForPort(port, tries = 60) {
   for (let i = 0; i < tries; i++) {
     try {
@@ -67,12 +111,17 @@ async function waitForPort(port, tries = 60) {
     }
     await sleep(500);
   }
-  throw new Error(`Chrome 调试端口 ${port} 没起来`);
+  const state = await probePort(port);
+  throw new Error(
+    state === 'busy'
+      ? `Port ${port} is held by another process, so Chrome could not bind it. Set CSR_PORT to a free port.\n端口 ${port} 被别的程序占用，Chrome 没能起来。用 CSR_PORT 换一个端口。`
+      : `Chrome did not answer on port ${port} within 30s. Usual causes: Chrome failed to start, security software blocked it, or the profile is locked by another Chrome instance.\nChrome 调试端口 ${port} 在 30 秒内没响应。常见原因：Chrome 启动失败、被安全软件拦下、或 profile 被另一个 Chrome 实例锁着。`
+  );
 }
 
 async function launchChrome({ port, profile }) {
   const bin = findChrome();
-  if (!bin) throw new Error('没找到 Chrome / Edge，可用 CHROME_BIN 指定路径');
+  if (!bin) throw new Error('Chrome / Edge not found. Set CHROME_BIN to the executable path.\n没找到 Chrome / Edge，可用 CHROME_BIN 指定路径');
   await mkdir(profile, { recursive: true });
 
   const args = [
@@ -135,17 +184,18 @@ class Conn {
   }
 }
 
-export async function createSession({ port = defaultPort(), profile, name = 'csr' } = {}) {
+export async function createSession({ port, profile, name = 'csr' } = {}) {
   const prof = profile || defaultProfile();
-  let version = null;
-  try {
-    version = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
-  } catch {
-    version = null;
-  }
-  if (!version) {
-    await launchChrome({ port, profile: prof });
-    version = await waitForPort(port);
+
+  // 端口可能被别的程序占着（比如另一个 Chrome 实例、别的调试工具），
+  // 直接沿用会卡在「端口没起来」这种含糊报错上。先探一遍再决定
+  const picked = await pickPort(port || defaultPort());
+  const usePort = picked.port;
+  if (!picked.reuse) {
+    await launchChrome({ port: usePort, profile: prof });
+    await waitForPort(usePort);
+  } else if (usePort !== (port || defaultPort())) {
+    console.error(`Port ${port || defaultPort()} is busy, using ${usePort} instead.`);
   }
 
   let tabId = null;
@@ -157,7 +207,7 @@ export async function createSession({ port = defaultPort(), profile, name = 'csr
       conn.close();
       conn = null;
     }
-    const r = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`, {
+    const r = await fetch(`http://127.0.0.1:${usePort}/json/new?${encodeURIComponent(url)}`, {
       method: 'PUT',
     });
     if (!r.ok) throw new Error('开标签失败：HTTP ' + r.status);
@@ -224,7 +274,7 @@ export async function createSession({ port = defaultPort(), profile, name = 'csr
         conn = null;
       }
       if (tabId) {
-        await fetch(`http://127.0.0.1:${port}/json/close/${tabId}`).catch(() => {});
+        await fetch(`http://127.0.0.1:${usePort}/json/close/${tabId}`).catch(() => {});
         tabId = null;
       }
     },

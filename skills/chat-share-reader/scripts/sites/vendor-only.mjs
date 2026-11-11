@@ -27,8 +27,12 @@ export const match = (url) => {
 // 走到这里说明 vendor 通道不可用（没装 / 调用失败），只能如实报错
 export async function read() {
   throw new Error(
-    '这个站点只有 Convolvger 通道，本机没有可用的 convolvger。' +
-      '安装：uv venv E:/01-project/05_shared-resource/convolvger --python 3.13 && ' +
-      'uv pip install --python E:/01-project/05_shared-resource/convolvger convolvger'
+    'This site only works through Convolvger, which is not available.\n' +
+      '  uv tool install convolvger      (recommended, needs Python 3.12+)\n' +
+      '  pip install convolvger\n' +
+      '  uvx convolvger                  (no install, runs ad hoc)\n' +
+      'Then set convolvgerBin in ~/.chat-share-reader/config.json, or the CONVOLVGER_BIN env var.\n' +
+      '这个站点只有 Convolvger 通道，当前没有可用的 convolvger。装好后把路径写进 config.json 的 convolvgerBin，' +
+      '或用环境变量 CONVOLVGER_BIN 指定。'
   );
 }

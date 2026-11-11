@@ -1,6 +1,6 @@
 ---
 name: chat-share-reader
-description: 导出、备份、归档 AI 对话为 markdown。两种输入：公开分享链接（ChatGPT、Claude、Gemini、Grok、Perplexity、DeepSeek、Kimi、Qwen、WorkBuddy），和本机 15 种 agent 的会话记录（Claude Code、Codex、Cursor、opencode、Cline、Gemini CLI、Copilot CLI、Kimi Code、Antigravity、Hermes、pi、Oh My Pi、zcode、Qwen Code、Command Code）。可按关键词搜索历史会话、按工作目录筛选、批量导出，能读 Codex 的 .jsonl.zst 压缩归档，也能把上一轮对话的上下文带进当前会话。
+description: "Export, back up, or archive AI chat conversations to markdown. Two inputs: public share links (ChatGPT, Claude, Gemini, Grok, Perplexity, DeepSeek, Kimi, Qwen, WorkBuddy) and 15 local agent session stores (Claude Code, Codex, Cursor, opencode, Cline, Gemini CLI, Copilot CLI, Kimi Code, Antigravity, Hermes, pi, Oh My Pi, zcode, Qwen Code, Command Code). Search past sessions by keyword, filter by working directory, batch export, read compressed .jsonl.zst archives, and pipe a previous session's context into the current conversation. 导出、备份、归档 AI 对话为 markdown，支持公开分享链接和 15 种本机 agent 会话记录，可按关键词搜索、按工作目录筛选、批量导出，能读压缩归档。"
 license: MIT
 metadata:
   openclaw:
