@@ -74,8 +74,10 @@ export async function createSession({ name = 'csr', bin } = {}) {
     backend: 'opencli',
     name,
 
-    async open(url) {
-      await cmd('open', url, '--window', 'background');
+    async open(url, opts) {
+      // 有些站（Gemini）在后台标签会被浏览器节流，Angular 不渲染，必须前台窗口打开
+      const win = (opts && opts.window) || 'background';
+      await cmd('open', url, '--window', win);
     },
 
     async eval(code) {

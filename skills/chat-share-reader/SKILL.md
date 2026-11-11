@@ -86,7 +86,17 @@ cdp 后端首次访问有 Cloudflare 挑战的站点时会打印提示，等你�
 
 `read.mjs` 一次只处理一条分享链接，`bulk.mjs` 处理你自己账号下的全部历史。区别在接口：分享走免认证的 `/share/<id>`，批量走登录后才放行的列表与详情接口。
 
-现成站点：DeepSeek、Qwen、Kimi、ChatGPT、Claude。
+现成站点与通道（2026-11 实测）：
+
+| 站 | 通道 | 鉴权 | 备注 |
+| --- | --- | --- | --- |
+| DeepSeek | 接口 | localStorage 的 `userToken`（形如 `{"value":"..."}`） | 正文在 `chat_messages[].fragments`，分 REQUEST/SEARCH/THINK/RESPONSE 四类 |
+| ChatGPT | 接口 | `/api/auth/session` 的 `accessToken`，走 Bearer | 只带 cookie 会返回 `total:0` 而不报错；tpp 空间与普通空间是两套列表 |
+| Grok | 接口 | cookie，但必须顶层 XHR | 同源 iframe 的 fetch 被 CF 拦成挑战页 |
+| Perplexity | 接口 | cookie | 无列表接口，从侧边栏 `/session/` 链接收；正文在 `entry.text` 的 FINAL 步骤，`content.answer` 还是层 JSON |
+| Gemini | DOM | cookie | batchexecute RPC 逆向成本高；必须前台窗口 + 等十几秒渲染；虚拟滚动要往上滚才能载全 |
+| Qwen | 接口 | — | 阿里 WAF 把接口拦成挑战 HTML，未打通 |
+| Kimi | 接口 | — | 未实测 |
 
 三条硬约束，改之前先看：
 

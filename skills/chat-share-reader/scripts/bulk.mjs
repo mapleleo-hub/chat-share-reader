@@ -13,7 +13,7 @@
 //   node scripts/bulk.mjs list --site deepseek
 //   node scripts/bulk.mjs export --site deepseek --out ../../25-chatArchive/archive --limit 20
 //   node scripts/bulk.mjs export --site deepseek --out DIR --since 2026-09-01
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { available, createSession } from './lib/backend/opencli.mjs';
@@ -24,18 +24,53 @@ const SESSION = 'csr-bulk';
 // 挂了 XHR；豆包同类。同源空白 iframe 里的 fetch 是没被碰过的原生实现，优先用它，
 // 拿不到再退回顶层 XHR，最后才用被改写过的 fetch。
 const PRELUDE = `
-window.__req = async function (url, opts) {
-  const abs = new URL(url, location.href).href;
-  const parse = (t) => { try { return JSON.parse(t); } catch (e) { return null; } };
+window.__auth = function () {
+  var cands = [];
+  for (var i = 0; i < localStorage.length; i++) {
+    var k = localStorage.key(i);
+    if (!/token|jwt|auth|session/i.test(k)) continue;
+    cands.push([k, localStorage.getItem(k) || ""]);
+  }
+  for (var j = 0; j < cands.length; j++) {
+    var v = cands[j][1];
+    if (/^ey[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/.test(v)) return v;
+    try {
+      var o = JSON.parse(v);
+      if (o && typeof o.value === "string" && o.value) return o.value;
+      if (o && typeof o.access_token === "string") return o.access_token;
+    } catch (e) {}
+  }
+  for (var m = 0; m < cands.length; m++) {
+    var w = cands[m][1];
+    if (w && w.length > 20 && w.length < 4000 && w.charAt(0) !== "{") return w;
+  }
+  return "";
+};
+window.__unauthed = function (r) {
+  if (!r) return false;
+  if (r.status === 401 || r.status === 403) return true;
+  var j = r.json;
+  if (j && (j.code === 40003 || j.code === 40001 || j.code === 401)) return true;
+  if (j && j.detail && /unauthor|forbidden|credential/i.test(String(j.detail))) return true;
+  var t = String(r.text || "");
+  if (t.indexOf("Unauthorized") >= 0 && t.length < 400) return true;
+  return false;
+};
+window.__raw = async function (url, opts) {
+  var abs = new URL(url, location.href).href;
+  var parse = function (t) { try { return JSON.parse(t); } catch (e) { return null; } };
   try {
-    const f = document.createElement("iframe");
+    var f = document.createElement("iframe");
     f.style.display = "none";
     document.body.appendChild(f);
-    const w = f.contentWindow;
-    const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), (opts && opts.timeout) || 25000);
-    const r = await w.fetch(abs, { credentials: "include", signal: ctl.signal });
-    const t = await r.text();
+    var ctl = new AbortController();
+    var timer = setTimeout(function () { ctl.abort(); }, (opts && opts.timeout) || 25000);
+    var r = await f.contentWindow.fetch(abs, {
+      credentials: "include",
+      headers: (opts && opts.headers) || {},
+      signal: ctl.signal
+    });
+    var t = await r.text();
     clearTimeout(timer);
     f.remove();
     return { status: r.status, text: t, json: parse(t), via: "iframe" };
@@ -46,17 +81,30 @@ window.__req = async function (url, opts) {
       x.open((opts && opts.method) || "GET", url, true);
       x.withCredentials = true;
       x.timeout = (opts && opts.timeout) || 25000;
+      var h = (opts && opts.headers) || {};
+      for (var q in h) x.setRequestHeader(q, h[q]);
       x.onload = function () { res({ status: x.status, text: x.responseText, json: parse(x.responseText), via: "xhr" }); };
-      x.onerror = function () { res({ status: 0, error: "network", via: "xhr" }); };
-      x.ontimeout = function () { res({ status: 0, error: "timeout", via: "xhr" }); };
+      x.onerror = function () { res({ status: 0, error: "network", text: "", via: "xhr" }); };
+      x.ontimeout = function () { res({ status: 0, error: "timeout", text: "", via: "xhr" }); };
       x.send((opts && opts.body) || null);
-    } catch (e) { res({ status: 0, error: String(e), via: "xhr" }); }
+    } catch (e) { res({ status: 0, error: String(e), text: "", via: "xhr" }); }
   });
+};
+window.__req = async function (url, opts) {
+  var first = await window.__raw(url, opts);
+  if (!window.__unauthed(first)) return first;
+  var tok = window.__auth();
+  if (!tok) return first;
+  var h2 = Object.assign({}, (opts && opts.headers) || {});
+  h2.Authorization = "Bearer " + tok;
+  var second = await window.__raw(url, { method: opts && opts.method, body: opts && opts.body, timeout: opts && opts.timeout, headers: h2 });
+  second.retried = true;
+  return second;
 };
 window.__apis = function () {
   return performance.getEntriesByType("resource")
     .map(function (e) { return e.name; })
-    .filter(function (n) { return n.indexOf("/api/") >= 0 || n.indexOf("/samantha/") >= 0 || n.indexOf("/alice/") >= 0; });
+    .filter(function (n) { return n.indexOf("/api/") >= 0 || n.indexOf("/rest/") >= 0 || n.indexOf("/samantha/") >= 0; });
 };
 `;
 
@@ -96,11 +144,19 @@ const SITES = {
           const r = await req("/api/v0/chat/history_messages?chat_session_id=" + it.id);
           const j = r.json || {};
           const biz = (j.data && j.data.biz_data) || {};
-          const msgs = (biz.chat_messages || []).map((m) => ({
-            role: m.role === "USER" ? "user" : "assistant",
-            time: m.inserted_at ? new Date(m.inserted_at * 1000).toISOString() : "",
-            body: (m.content || "").trim()
-          })).filter((m) => m.body);
+          const msgs = (biz.chat_messages || []).map((m) => {
+            const NL = String.fromCharCode(10);
+            return {
+              role: m.role === "USER" ? "user" : "assistant",
+              time: m.inserted_at ? new Date(m.inserted_at * 1000).toISOString() : "",
+              body: (m.fragments || []).map((f) => {
+                if (f.type === "REQUEST" || f.type === "RESPONSE") return String(f.content || "");
+                if (f.type === "THINK") return "> 思考过程" + NL + "> " + String(f.content || "").trim().split(NL).join(NL + "> ");
+                if (f.type === "SEARCH") return "> 联网检索：" + String(f.content || "");
+                return "";
+              }).filter(Boolean).join(NL + NL).trim()
+            };
+          }).filter((m) => m.body);
           out.push({ id: it.id, title: it.title || "", updatedAt: it.updatedAt || 0, messages: msgs });
         } catch (e) {
           out.push({ id: it.id, error: String(e) });
@@ -198,34 +254,53 @@ const SITES = {
   chatgpt: {
     label: 'ChatGPT',
     entry: 'https://chatgpt.com/',
+    // 2026-11 起 backend-api 要 Bearer token，光有 cookie 会返回 total:0 而不报错，
+    // 是最容易误判成「账号没有历史」的坑。token 从 /api/auth/session 拿。
+    // 另外 tpp 空间与普通空间是两套列表，两个都要拉。
     listScript: `(async () => { const req = window.__req;
+      const ses = await req("/api/auth/session");
+      const tok = (ses.json && ses.json.accessToken) || "";
+      if (!tok) { window.__err = "拿不到 accessToken，登录态可能已失效"; return; }
+      const H = { Authorization: "Bearer " + tok };
       const out = [];
-      let offset = 0;
-      for (let i = 0; i < 500; i++) {
-        const r = await req("/backend-api/conversations?offset=" + offset + "&limit=100&order=updated");
-        if (r.status === 401 || r.status === 403) { window.__err = "未登录或登录已失效：" + r.status; return; }
-        const j = r.json || {};
-        const arr = j.items || [];
-        for (const s of arr) out.push({ id: s.id, title: s.title || "", updatedAt: s.update_time || s.create_time || 0 });
-        if (!arr.length || arr.length < 100) break;
-        offset += arr.length;
-        await new Promise((r) => setTimeout(r, 300));
+      const seen = new Set();
+      const queries = ["exclude_conversation_origin=tpp", "conversation_origin=tpp"];
+      for (const q of queries) {
+        let offset = 0;
+        for (let i = 0; i < 300; i++) {
+          const url = "/backend-api/conversations?expand=false&hide_snorlax=false&is_archived=false&is_starred=false&order=updated&limit=100&" + q + "&offset=" + offset;
+          const r = await req(url, { headers: H });
+          if (r.status === 401 || r.status === 403) { window.__err = "列表 " + r.status; return; }
+          const j = r.json || {};
+          const arr = j.items || [];
+          for (const x of arr) {
+            if (seen.has(x.id)) continue;
+            seen.add(x.id);
+            out.push({ id: x.id, title: x.title || "", updatedAt: x.update_time || x.create_time || 0 });
+          }
+          if (arr.length < 100) break;
+          offset += arr.length;
+          await new Promise((r) => setTimeout(r, 300));
+        }
       }
       window.__list = JSON.stringify(out);
     })()`,
     detailScript: `(async () => { const req = window.__req;
+      const ses = await req("/api/auth/session");
+      const tok = (ses.json && ses.json.accessToken) || "";
+      const H = { Authorization: "Bearer " + tok };
       const ids = window.__arg || [];
       const out = [];
       for (const it of ids) {
         try {
-          const r = await req("/backend-api/conversation/" + it.id);
+          const r = await req("/backend-api/conversation/" + it.id, { headers: H });
           const j = r.json || {};
           const mapping = j.mapping || {};
           let cur = j.current_node;
           const chain = [];
-          const seen = new Set();
-          while (cur && mapping[cur] && !seen.has(cur)) {
-            seen.add(cur);
+          const guard = new Set();
+          while (cur && mapping[cur] && !guard.has(cur)) {
+            guard.add(cur);
             chain.push(mapping[cur]);
             cur = mapping[cur].parent;
           }
@@ -238,7 +313,7 @@ const SITES = {
             if (role !== "user" && role !== "assistant") continue;
             if (msg.metadata && msg.metadata.is_visually_hidden_from_conversation) continue;
             const parts = (msg.content && msg.content.parts) || [];
-            const body = parts.filter((p) => typeof p === "string").join("\\n\\n").trim();
+            const body = parts.filter((p) => typeof p === "string").join(String.fromCharCode(10, 10)).trim();
             if (!body) continue;
             msgs.push({ role, time: msg.create_time || "", body });
           }
@@ -247,6 +322,191 @@ const SITES = {
           out.push({ id: it.id, error: String(e) });
         }
         await new Promise((r) => setTimeout(r, 250));
+      }
+      window.__batch = JSON.stringify(out);
+    })()`,
+  },
+
+  gemini: {
+    label: 'Gemini',
+    entry: 'https://gemini.google.com/app',
+    // 走 DOM：正文由 Angular 渲染，接口是 batchexecute RPC（要内部 token，逆向成本高）。
+    // 侧边栏分组不显示时间，列表也拿不到 create_time，所以日期留空，md 里标注。
+    // 坑：后台标签会被浏览器节流，Angular 不渲染，必须前台窗口打开并且等十几秒。
+    domMode: true,
+    foreground: true,
+    domDelay: 8000,
+    detailUrl: (id) => `https://gemini.google.com/app/${id}`,
+    listScript: `(async () => {
+      const cnt = () => document.querySelectorAll('a[href*="/app/"]').length;
+      let stable = 0;
+      const rounds = window.__max > 0 ? 2 : 60;
+      for (let i = 0; i < rounds; i++) {
+        const b = cnt();
+        const sc = document.querySelector("infinite-scroller") || document.querySelector("conversations-list");
+        if (sc) sc.scrollTop = sc.scrollHeight;
+        else window.scrollTo(0, document.body.scrollHeight);
+        await new Promise((r) => setTimeout(r, 900));
+        if (cnt() === b) { stable += 1; if (stable >= 2) break; } else stable = 0;
+      }
+      const NL = String.fromCharCode(10);
+      const seen = new Map();
+      document.querySelectorAll('a[href*="/app/"]').forEach((a) => {
+        const m = (a.getAttribute("href") || "").match(/\\/app\\/([0-9a-f]+)/);
+        if (!m) return;
+        const title = (a.innerText || "").trim().split(NL)[0];
+        if (!seen.has(m[1])) seen.set(m[1], { id: m[1], title: title, updatedAt: "" });
+      });
+      window.__list = JSON.stringify(Array.from(seen.values()));
+    })()`,
+    extractScript: `(async () => {
+      const NL = String.fromCharCode(10);
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      for (let i = 0; i < 12; i++) {
+        if (document.querySelector("user-query") || document.querySelector("model-response")) break;
+        await wait(1000);
+      }
+      // 虚拟滚动：只渲染视口附近。往上滚把更早的回合载进来，直到条数不再增长。
+      const box = document.querySelector("chat-window") || document.querySelector("infinite-scroller");
+      let last = -1;
+      for (let i = 0; i < 30; i++) {
+        const n = document.querySelectorAll("user-query, model-response").length;
+        if (n === last) break;
+        last = n;
+        if (box) box.scrollTop = 0;
+        window.scrollTo(0, 0);
+        await wait(700);
+      }
+      const nodes = Array.prototype.slice.call(document.querySelectorAll("user-query, model-response"));
+      const msgs = [];
+      for (const n of nodes) {
+        const isUser = n.tagName.toLowerCase() === "user-query";
+        let txt = n.innerText || "";
+        txt = txt.replace(/^(你說了|You said)\\s*/, "").replace(/^(Gemini 說了|Gemini said)\\s*/, "").trim();
+        if (txt) msgs.push({ role: isUser ? "user" : "assistant", time: "", body: txt });
+      }
+      const title = (document.title || "").replace(/\\s*-\\s*Google Gemini\\s*$/, "").trim();
+      return JSON.stringify({ title: title, messages: msgs, nodes: nodes.length });
+    })()`,
+  },
+
+  perplexity: {
+    label: 'Perplexity',
+    entry: 'https://www.perplexity.ai/',
+    // 列表没有独立接口（/rest/thread/list_ask_threads 会被当成 thread id 解析，返回
+    // Invalid UUID），只能从侧边栏 /session/ 链接收集。详情走 /rest/thread/<id>。
+    // 正文在 entry.text 这个 JSON 数组里，取 step_type === FINAL 的 content.answer，
+    // 而这个 answer 本身又是一层 JSON 字符串，要二次 parse。
+    listScript: `(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const cnt = () => document.querySelectorAll('a[href^="/session/"]').length;
+      const rounds = window.__max > 0 ? 2 : 60;
+      let stable = 0;
+      for (let i = 0; i < rounds; i++) {
+        const b = cnt();
+        window.scrollTo(0, document.body.scrollHeight);
+        await wait(900);
+        if (cnt() === b) { stable += 1; if (stable >= 2) break; } else stable = 0;
+      }
+      const NL = String.fromCharCode(10);
+      const seen = new Map();
+      document.querySelectorAll('a[href^="/session/"]').forEach((a) => {
+        const m = (a.getAttribute("href") || "").match(/\\/session\\/([0-9a-f-]{36})/);
+        if (!m) return;
+        const title = (a.innerText || "").trim().split(NL)[0];
+        if (!seen.has(m[1])) seen.set(m[1], { id: m[1], title: title, updatedAt: "" });
+      });
+      window.__list = JSON.stringify(Array.from(seen.values()));
+    })()`,
+    detailScript: `(async () => { const req = window.__req;
+      const ids = window.__arg || [];
+      const out = [];
+      for (const it of ids) {
+        try {
+          const r = await req("/rest/thread/" + it.id + "?with_parent_info=true&version=2.18&source=default&limit=20&offset=0");
+          const j = r.json || {};
+          const entries = j.entries || [];
+          const msgs = [];
+          for (const e of entries) {
+            const q = (e.query_str || "").trim();
+            const when = e.updated_datetime || "";
+            if (q) msgs.push({ role: "user", time: when, body: q });
+            let steps = [];
+            try {
+              const p = JSON.parse(e.text);
+              steps = Array.isArray(p) ? p : [p];
+            } catch (err) {}
+            for (const s of steps) {
+              if (!s || s.step_type !== "FINAL" || !s.content) continue;
+              let ans = s.content.answer || "";
+              try {
+                const inner = JSON.parse(ans);
+                if (inner && typeof inner.answer === "string") ans = inner.answer;
+              } catch (err) {}
+              ans = String(ans).trim();
+              if (ans) msgs.push({ role: "assistant", time: when, body: ans });
+            }
+          }
+          const first = entries[0] || {};
+          out.push({
+            id: it.id,
+            title: (first.query_str || it.title || "").slice(0, 60),
+            updatedAt: first.updated_datetime || 0,
+            messages: msgs
+          });
+        } catch (e) {
+          out.push({ id: it.id, error: String(e) });
+        }
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      window.__batch = JSON.stringify(out);
+    })()`,
+  },
+
+  grok: {
+    label: 'Grok',
+    entry: 'https://grok.com/',
+    // 全站 Cloudflare 硬挑战：同源 iframe 里的 fetch 会被拦成挑战页，只有顶层 XHR 能过。
+    // __req 先试 iframe 再退 XHR，所以这里能自动落到能用的通道。
+    // 列表分页用 nextPageToken；详情在 /responses，sender 为 human/assistant。
+    listScript: `(async () => { const req = window.__req;
+      const out = [];
+      const seen = new Set();
+      let token = "";
+      for (let i = 0; i < 200; i++) {
+        const url = "/rest/app-chat/conversations?pageSize=100" + (token ? "&pageToken=" + encodeURIComponent(token) : "");
+        const r = await req(url);
+        if (!r.status || r.status >= 400) { window.__err = "列表 " + r.status + " " + String(r.text || "").slice(0, 160); return; }
+        const j = r.json || {};
+        const arr = j.conversations || [];
+        for (const c of arr) {
+          if (seen.has(c.conversationId)) continue;
+          seen.add(c.conversationId);
+          out.push({ id: c.conversationId, title: c.title || "", updatedAt: c.modifyTime || c.createTime || "" });
+        }
+        token = j.nextPageToken || "";
+        if (!token || !arr.length) break;
+        await new Promise((r2) => setTimeout(r2, 300));
+      }
+      window.__list = JSON.stringify(out);
+    })()`,
+    detailScript: `(async () => { const req = window.__req;
+      const ids = window.__arg || [];
+      const out = [];
+      for (const it of ids) {
+        try {
+          const r = await req("/rest/app-chat/conversations/" + it.id + "/responses?pageSize=200");
+          const j = r.json || {};
+          const msgs = (j.responses || []).map((m) => ({
+            role: (m.sender === "human" || m.sender === "user") ? "user" : "assistant",
+            time: m.createTime || "",
+            body: String(m.message || "").trim()
+          })).filter((m) => m.body);
+          out.push({ id: it.id, title: it.title || "", updatedAt: it.updatedAt || 0, messages: msgs });
+        } catch (e) {
+          out.push({ id: it.id, error: String(e) });
+        }
+        await new Promise((r2) => setTimeout(r2, 300));
       }
       window.__batch = JSON.stringify(out);
     })()`,
@@ -339,15 +599,15 @@ function slug(title) {
 }
 
 async function openSite(sess, site) {
-  await sess.open(site.entry);
+  await sess.open(site.entry, { window: site.foreground ? 'foreground' : 'background' });
   await sleep(3000);
   await sess.eval(PRELUDE);
   const here = await sess.eval('location.href');
   return String(here || '').trim();
 }
 
-async function fetchList(sess, site) {
-  await sess.eval('window.__err = ""; window.__list = ""');
+async function fetchList(sess, site, maxWanted) {
+  await sess.eval('window.__err = ""; window.__list = ""; window.__max = ' + Number(maxWanted || 0));
   await sess.eval(site.listScript);
   const err = cleanJson(await sess.eval('window.__err || ""'));
   if (err) throw new Error(`列表接口报错：${typeof err === 'string' ? err : JSON.stringify(err).slice(0, 300)}`);
@@ -364,6 +624,68 @@ async function fetchBatch(sess, site, items) {
   return batch;
 }
 
+
+// DOM 模式：接口逆向不动的站（Gemini 走 batchexecute RPC，Grok 全站 CF），改成逐条打开
+// 会话页读渲染后的 DOM。慢，但选择器一旦对上就稳定，且不依赖私有接口。
+async function domExport(sess, site, todo, outDir, opts) {
+  const domToMd = await readFile(new URL('./lib/dom-to-md.js', import.meta.url), 'utf8');
+  const records = [];
+  const failed = [];
+
+  for (let i = 0; i < todo.length; i++) {
+    const it = todo[i];
+    try {
+      await sess.open(site.detailUrl(it.id), { window: site.foreground ? 'foreground' : 'background' });
+      await sleep(opts.domDelay || 3000);
+      let data = cleanJson(await sess.eval(domToMd + String.fromCharCode(10) + site.extractScript));
+      if (!data || !data.messages) {
+        await sleep(2500);
+        data = cleanJson(await sess.eval(domToMd + String.fromCharCode(10) + site.extractScript));
+      }
+      const messages = (data && data.messages || []).filter((m) => m && m.body && String(m.body).trim());
+      if (!messages.length) {
+        failed.push({ id: it.id, error: (data && data.error) || '无消息' });
+        console.log(`[${i + 1}/${todo.length}] 空 ${it.id}`);
+        continue;
+      }
+      const day = isoTime(it.updatedAt) || isoTime(messages[0].time) || '0000-00-00';
+      const dir = path.join(outDir, opts.site, day.slice(0, 7));
+      await mkdir(dir, { recursive: true });
+      const title = (data.title || it.title || '').trim() || '(无标题)';
+      const file = path.join(dir, `${day}_${opts.site}_${String(it.id).slice(0, 12)}_${slug(title)}.md`);
+      const md = buildDoc({
+        title,
+        url: site.detailUrl(it.id),
+        channel: `bulk/${opts.site}/dom`,
+        messages: messages.map((m) => ({ role: m.role, time: m.time || '', body: String(m.body).trim() })),
+      });
+      await writeFile(file, md, 'utf8');
+      records.push({
+        date: day,
+        source: opts.site,
+        id: it.id,
+        title,
+        messages: messages.length,
+        chars: messages.reduce((n, m) => n + String(m.body).length, 0),
+        file,
+      });
+      console.log(`[${i + 1}/${todo.length}] ${messages.length} 条 ${title.slice(0, 24)}`);
+    } catch (e) {
+      failed.push({ id: it.id, error: String(e.message || e) });
+      console.log(`[${i + 1}/${todo.length}] 失败 ${it.id}`);
+    }
+    await sleep(opts.delay || 500);
+  }
+
+  const indexFile = path.join(outDir, `bulk-${opts.site}.jsonl`);
+  await writeFile(indexFile, records.map((r) => JSON.stringify(r)).join(String.fromCharCode(10)) + String.fromCharCode(10), 'utf8');
+  if (failed.length) {
+    await writeFile(path.join(outDir, `bulk-${opts.site}-failed.json`), JSON.stringify(failed, null, 1), 'utf8');
+  }
+  console.log(`\n完成：成功 ${records.length}，失败 ${failed.length}`);
+  console.log(`索引 ${indexFile}`);
+}
+
 async function cmdExport(opts) {
   const site = SITES[opts.site];
   if (!site) throw new Error(`未知站点：${opts.site}`);
@@ -377,7 +699,7 @@ async function cmdExport(opts) {
     throw new Error(`还没登录 ${site.label}，当前停在 ${where}。先在浏览器里登录一次再跑。`);
   }
 
-  const list = await fetchList(sess, site);
+  const list = await fetchList(sess, site, opts.limit);
   console.log(`${site.label} 账号下共 ${list.length} 个会话`);
 
   let todo = list;
@@ -385,6 +707,8 @@ async function cmdExport(opts) {
   if (opts.limit) todo = todo.slice(0, opts.limit);
   todo.sort((a, b) => String(isoTime(b.updatedAt)).localeCompare(String(isoTime(a.updatedAt))));
   console.log(`本次导出 ${todo.length} 个${opts.since ? `（${opts.since} 之后）` : ''}`);
+
+  if (site.domMode) return domExport(sess, site, todo, outDir, opts);
 
   const records = [];
   const failed = [];
@@ -462,7 +786,7 @@ async function cmdList(opts) {
     console.log(`未登录，当前停在 ${where}`);
     return;
   }
-  const list = await fetchList(sess, site);
+  const list = await fetchList(sess, site, opts.limit);
   console.log(`${site.label} 共 ${list.length} 个会话`);
   for (const x of list.slice(0, opts.limit || 20)) {
     console.log(`${isoTime(x.updatedAt) || '----'}  ${String(x.id).slice(0, 14)}  ${x.title || '(无标题)'}`);
