@@ -82,6 +82,20 @@ node scripts/sessions.mjs export <id 前缀或路径> [--stdout] [--full] [--jso
 
 cdp 后端首次访问有 Cloudflare 挑战的站点时会打印提示，等你在弹出的窗口里手动过一次验证，之后 cookie 存在持久 profile 里。
 
+## 登录态批量导出
+
+`read.mjs` 一次只处理一条分享链接，`bulk.mjs` 处理你自己账号下的全部历史。区别在接口：分享走免认证的 `/share/<id>`，批量走登录后才放行的列表与详情接口。
+
+现成站点：DeepSeek、Qwen、Kimi、ChatGPT、Claude。
+
+三条硬约束，改之前先看：
+
+1. **页面里的 `fetch` 和 `XHR` 都可能被站点自己改写**。Qwen 的阿里埋点包了 `window.fetch`，请求会直接挂起；WAF 又会挂掉 XHR。所以 `__req` 优先用同源空白 iframe 的 `contentWindow.fetch`（没被碰过的原生实现），再退 XHR，最后才用被改写过的 fetch。
+2. **接口路径不要猜**，跑 `probe`：读 `performance.getEntriesByType("resource")` 拿页面自己发过的接口，逐个打一次打状态和响应开头。字段名也从这里读。
+3. **WAF 是单独的墙**。Qwen、豆包的接口对脚本请求会返回阿里云 WAF 的挑战 HTML（`aliyun_waf_aa`），200 状态但内容不是 JSON。这类站点要么靠真实 UI 交互加载，要么放弃接口路径。
+
+登录检测：`openSite` 之后看 URL 是否落回 `sign_in|login`，落回去直接报错让人先登录。不要试图替用户登录，也不要读 cookie 库（Chrome 对 `Cookies` 文件独占锁，`mode=ro` 也打不开）。
+
 ## 不要再造轮子
 
 - **Convolvger 已覆盖四个站**，不要自己写 Gemini/DeepSeek/Kimi/Qwen 的解析。它带快照时间、conversation id、每条消息原始时间戳。
