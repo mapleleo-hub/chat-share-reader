@@ -45,6 +45,12 @@ triggers:
 
 只需要 Node 22。浏览器和 Python 都是可选的，只有部分站点用得上。
 
+输出语言跟随系统 locale，也可用 `CSR_LANG=en` 或 `CSR_LANG=zh` 强制。终端提示、导出文件的元信息标题、角色名都跟着变。
+
+```bash
+CSR_LANG=en node scripts/sessions.mjs list --limit 5
+```
+
 ```bash
 # 分享链接（九个站点）
 node scripts/read.mjs <url> [更多 url...] [--out DIR] [--stdout] [--json]

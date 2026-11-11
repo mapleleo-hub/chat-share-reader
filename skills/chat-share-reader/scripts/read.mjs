@@ -10,6 +10,7 @@
 //
 // 站点模块声明 useVendor 表示允许先试 Convolvger，失败后回退到自己的 read()。
 import { writeFile, mkdir, readFile, unlink } from 'node:fs/promises';
+import { t } from './lib/i18n.mjs';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import * as workbuddy from './sites/workbuddy.mjs';
@@ -157,7 +158,10 @@ async function runOne(url, opts) {
 
 const { urls, opts } = parseArgs(process.argv.slice(2));
 if (!urls.length) {
-  console.error('用法：node read.mjs <url> [url2 ...] [--out DIR] [--stdout] [--json] [--no-vendor]');
+  console.error(t(
+    '用法：node read.mjs <url> [url2 ...] [--out DIR] [--stdout] [--json] [--no-vendor]',
+    'Usage: node read.mjs <url> [url2 ...] [--out DIR] [--stdout] [--json] [--no-vendor]'
+  ));
   process.exit(2);
 }
 
@@ -180,7 +184,7 @@ if (opts.json) {
     else if (r.md) console.log(r.md);
     else {
       const fb = r.vendorFallback ? `（vendor 失败后回退：${r.vendorFallback}）` : '';
-      console.log(`OK ${r.site} [${r.channel}] ${r.messages} 条 -> ${r.file}${fb}`);
+      console.log(`OK ${r.site} [${r.channel}] ${r.messages} ${t('条', 'msgs')} -> ${r.file}${fb}`);
     }
   }
 }

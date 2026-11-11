@@ -26,6 +26,7 @@ import * as workbuddyLocal from './lib/local/workbuddy.mjs';
 import { makeParser } from './lib/local/jsonl-generic.mjs';
 import { lines as readLines, readText } from './lib/local/zst.mjs';
 import { buildDoc, safeName, normalizeMessages } from './lib/md.mjs';
+import { t, role as rn } from './lib/i18n.mjs';
 
 const home = os.homedir();
 
@@ -360,7 +361,7 @@ async function cmdList(opts, names) {
           source: x.name,
           id: x.id || idOfFile(x.ref),
           time: fmtTime(x.time),
-          title: x.title || '(无标题)',
+          title: x.title || t('(无标题)', '(untitled)'),
           count: x.count,
           ref: x.file || x.ref,
         })),
@@ -369,13 +370,13 @@ async function cmdList(opts, names) {
       )
     );
   }
-  if (!items.length) return console.log('没有找到任何会话');
+  if (!items.length) return console.log(t('没有找到任何会话', 'No sessions found'));
   // 按时间混排时同源不连续，分组标题会重复出现，改成每行带来源
   for (const x of items) {
     const id = x.id ? String(x.id) : idOfFile(x.ref);
-    const size = x.size || (x.count ? x.count + '条' : '');
+    const size = x.size || (x.count ? x.count + t('条', '') : '');
     const src = String(SOURCES[x.name].label || x.name).padEnd(11);
-    console.log(`${fmtTime(x.time)}  ${src} ${String(size).padStart(7)}  ${id}  ${x.title || '(无标题)'}`);
+    console.log(`${fmtTime(x.time)}  ${src} ${String(size).padStart(7)}  ${id}  ${x.title || t('(无标题)', '(untitled)')}`);
   }
 }
 
@@ -435,7 +436,7 @@ async function matchCwd(item, needle) {
 }
 
 async function cmdSearch(keyword, opts, names) {
-  if (!keyword) throw new Error('要给一个关键词');
+  if (!keyword) throw new Error(t('要给一个关键词', 'A keyword is required'));
   const items = await discover(names);
   const hits = [];
   const failed = [];
@@ -475,7 +476,7 @@ async function cmdSearch(keyword, opts, names) {
           time: fmtTime(h.startedAt || h.time),
           cwd: (h.meta && h.meta.cwd) || '',
           ref: h.file || h.ref,
-          matched: h.matched.map((m) => ({ role: m.role, time: m.time, snippet: snippet(m.body, keyword) })),
+          matched: h.matched.map((m) => ({ role: rn(m.role), time: m.time, snippet: snippet(m.body, keyword) })),
         })),
         null,
         2
@@ -484,16 +485,16 @@ async function cmdSearch(keyword, opts, names) {
   }
 
   if (!hits.length) {
-    console.log('没有命中');
-    if (failed.length) console.log(`（${failed.length} 个会话解析失败，可用 --source 缩小范围重试）`);
+    console.log(t('没有命中', 'no matches'));
+    if (failed.length) console.log(t(`（${failed.length} 个会话解析失败，可用 --source 缩小范围重试）`, `(${failed.length} sessions failed to parse; narrow with --source and retry)`));
     return;
   }
   for (const h of hits) {
     console.log(
-      `${fmtTime(h.startedAt || h.time)}  ${String(h.source).padEnd(9)} 命中 ${h.matched.length} 条  「${h.title || '(无标题)'}」`
+      `${fmtTime(h.startedAt || h.time)}  ${String(h.source).padEnd(9)} ${t('命中', 'hits')} ${h.matched.length}  「${h.title || t('(无标题)', '(untitled)')}」`
     );
     for (const m of h.matched.slice(0, 3)) {
-      console.log(`  ${m.role}: ${snippet(m.body, keyword)}`);
+      console.log(`  ${rn(m.role)}: ${snippet(m.body, keyword)}`);
     }
     if (h.matched.length > 3) console.log(`  …另有 ${h.matched.length - 3} 条`);
     console.log(`  ${h.file || h.ref}`);
@@ -523,7 +524,7 @@ async function guessSource(file) {
 }
 
 async function cmdExport(target, opts, names) {
-  if (!target) throw new Error('要给会话 id 或文件路径');
+  if (!target) throw new Error(t('要给会话 id 或文件路径', 'Need a session id or file path'));
 
   let picked = [];
 
@@ -540,7 +541,7 @@ async function cmdExport(target, opts, names) {
         (x.family && String(x.family).includes(target)) ||
         (x.ref && typeof x.ref === 'string' && path.basename(x.ref).includes(target))
     );
-    if (!picked.length) throw new Error('找不到匹配的会话：' + target);
+    if (!picked.length) throw new Error(t('找不到匹配的会话：', 'No matching session: ') + target);
 
     // 文件名里带父线程 id 的分片直接收；一个都没补到说明分片改了名字，
     // 这时才逐个读文件头比对 session_meta，别让每次导出都全量扫一遍。
@@ -571,7 +572,7 @@ async function cmdExport(target, opts, names) {
   }
 
   const cfg = SOURCES[picked[0].name];
-  if (!cfg) throw new Error('未知来源：' + picked[0].name);
+  if (!cfg) throw new Error(t('未知来源：', 'Unknown source: ') + picked[0].name);
 
   const merged = [];
   const seen = new Set();
@@ -597,7 +598,7 @@ async function cmdExport(target, opts, names) {
   merged.sort((a, b) => String(a.at || a.__sort || '').localeCompare(String(b.at || b.__sort || '')));
 
   const messages = normalizeMessages(merged);
-  if (!messages.length) throw new Error('这个会话里没有可导出的对话');
+  if (!messages.length) throw new Error(t('这个会话里没有可导出的对话', 'This session has no exportable messages'));
 
   const first = messages.find((m) => m.role === '用户');
   const title = (first ? first.body : messages[0].body)
@@ -645,9 +646,9 @@ function cmdSources() {
     let state = '';
     if (cfg.kind === 'sqlite') {
       where = (cfg.parser.dbPath && cfg.parser.dbPath()) || '(未找到数据库)';
-      state = where.startsWith('(') ? '未安装' : '可用';
+      state = where.startsWith('(') ? t('未安装', 'absent') : t('可用', 'usable');
     } else {
-      state = roots.some((r) => existsSync(r)) ? '有目录' : '无目录';
+      state = roots.some((r) => existsSync(r)) ? t('有目录', 'found') : t('无目录', 'missing');
     }
     console.log(`${name.padEnd(7)} ${cfg.label.padEnd(12)} ${state.padEnd(6)} ${where}`);
   }
