@@ -34,6 +34,8 @@ export function t(zh, en) {
 const ROLE_MAP = {
   用户: 'User',
   助手: 'Assistant',
+  课堂笔记: 'Notes',
+  逐字稿: 'Transcript',
   Assistant: 'Assistant',
   User: 'User',
 };

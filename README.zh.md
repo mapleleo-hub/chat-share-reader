@@ -48,14 +48,15 @@ node skills/chat-share-reader/scripts/sessions.mjs export <id> --json
 | Chrome 或 Edge | Claude、Perplexity、Grok 三站不可用 |
 | Convolvger（Python 3.12+ 或 uv） | Gemini、DeepSeek、Kimi、Qwen 四站不可用 |
 
-零依赖就能用的部分：ChatGPT、WorkBuddy 两个分享站，加上 16 个本地会话源里的 JSONL 类（Claude Code、Codex、WorkBuddy、pi、Oh My Pi）。
+零依赖就能用的部分：ChatGPT、WorkBuddy、得到大脑三个分享站，加上 16 个本地会话源里的 JSONL 类（Claude Code、Codex、WorkBuddy、pi、Oh My Pi）。
 
-## 分享链接：九个站点
+## 分享链接：十个站点
 
 | 站点 | 链接形态 | 通道 |
 | --- | --- | --- |
 | ChatGPT | `chatgpt.com/share/<uuid>` | HTTP |
 | WorkBuddy | `workbuddy.link/p/<id>` | HTTP |
+| 得到大脑 | `biji.com/note/share_note/<id>` | HTTP |
 | Gemini | `gemini.google.com/share/<id>` | Convolvger |
 | DeepSeek | `chat.deepseek.com/share/<id>` | Convolvger |
 | Kimi | `kimi.com/share/<id>` | Convolvger |
@@ -63,6 +64,8 @@ node skills/chat-share-reader/scripts/sessions.mjs export <id> --json
 | Claude | `claude.ai/share/<uuid>` | 浏览器 |
 | Perplexity | `perplexity.ai/search/<uuid>` | 浏览器 |
 | Grok | `grok.com/share/<id>` | 浏览器 |
+
+得到大脑（biji.com）是语音笔记站，不是对话站。导出会带两条内容：整理的笔记全文，和带时间戳的逐字稿。它只有公开分享接口可用，走浏览器反而抓不全（桌面视口空白，正文懒加载）。
 
 浏览器通道有两个实现，自动选：本机有 opencli 就用它，没有就用 Node 22 内置的 WebSocket 直连 Chrome 的 DevTools 协议，不装任何 npm 包。
 

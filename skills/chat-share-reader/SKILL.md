@@ -1,6 +1,6 @@
 ---
 name: chat-share-reader
-description: "Export, back up, or archive AI chat conversations to markdown. Two inputs: public share links (ChatGPT, Claude, Gemini, Grok, Perplexity, DeepSeek, Kimi, Qwen, WorkBuddy) and 15 local agent session stores (Claude Code, Codex, Cursor, opencode, Cline, Gemini CLI, Copilot CLI, Kimi Code, Antigravity, Hermes, pi, Oh My Pi, zcode, Qwen Code, Command Code). Search past sessions by keyword, filter by working directory, batch export, read compressed .jsonl.zst archives, and pipe a previous session's context into the current conversation. 导出、备份、归档 AI 对话为 markdown，支持公开分享链接和 15 种本机 agent 会话记录，可按关键词搜索、按工作目录筛选、批量导出，能读压缩归档。"
+description: "Export, back up, or archive AI chat conversations to markdown. Two inputs: public share links (ChatGPT, Claude, Gemini, Grok, Perplexity, DeepSeek, Kimi, Qwen, WorkBuddy, biji.com/得到大脑) and 15 local agent session stores (Claude Code, Codex, Cursor, opencode, Cline, Gemini CLI, Copilot CLI, Kimi Code, Antigravity, Hermes, pi, Oh My Pi, zcode, Qwen Code, Command Code). Search past sessions by keyword, filter by working directory, batch export, read compressed .jsonl.zst archives, and pipe a previous session's context into the current conversation. 导出、备份、归档 AI 对话为 markdown，支持公开分享链接和 15 种本机 agent 会话记录，可按关键词搜索、按工作目录筛选、批量导出，能读压缩归档。"
 license: MIT
 metadata:
   openclaw:
@@ -37,6 +37,11 @@ triggers:
 - 搜索历史会话
 - 导出 Claude Code 会话
 - 导出 Codex 会话
+- biji.com
+- 得到大脑
+- 得到笔记
+- 语音笔记
+- 课堂笔记
 ---
 
 # chat-share-reader
@@ -52,7 +57,7 @@ CSR_LANG=en node scripts/sessions.mjs list --limit 5
 ```
 
 ```bash
-# 分享链接（九个站点）
+# 分享链接（十个站点）
 node scripts/read.mjs <url> [更多 url...] [--out DIR] [--stdout] [--json]
 
 # 本地会话（16 个源）
@@ -71,7 +76,7 @@ node scripts/sessions.mjs export <id 前缀或路径> [--stdout] [--full] [--jso
 
 | 通道 | 站点 | 依赖 |
 | --- | --- | --- |
-| HTTP（直连接口） | ChatGPT、WorkBuddy | 只要 Node 22+ |
+| HTTP（直连接口） | ChatGPT、WorkBuddy、得到大脑（biji.com） | 只要 Node 22+ |
 | Convolvger（第三方 CLI） | Gemini、DeepSeek、Kimi、Qwen | Python 3.12+ 或 uv，`uv tool install convolvger` |
 | 浏览器 | Claude、Perplexity、Grok | Chrome/Edge，或 opencli |
 
@@ -81,6 +86,25 @@ node scripts/sessions.mjs export <id 前缀或路径> [--stdout] [--full] [--jso
 - **cdp**：没有 opencli 时，用 Node 22 内置 WebSocket 直连 Chrome/Edge 的 DevTools 协议，零 npm 依赖，跨平台。
 
 cdp 后端首次访问有 Cloudflare 挑战的站点时会打印提示，等你在弹出的窗口里手动过一次验证，之后 cookie 存在持久 profile 里。
+
+### 得到大脑（biji.com）分享笔记
+
+`www.biji.com/note/share_note/<id>`。**不要开浏览器**，页面是 Vue SPA，桌面视口渲染出来整屏空白，只有移动端视口出内容，而且正文懒加载，DOM 抓取会整段丢（实测漏掉「课堂金句」小节）。
+
+免认证接口直接给全量，不需要 cookie、Referer，也不校验 UA：
+
+| 接口 | 内容 |
+| --- | --- |
+| `/voicenotes/web/share/notes/<id>` | `c.note.content` 是笔记 markdown 原文，含智能总结、课堂实录、金句、待办 |
+| `/voicenotes/web/share/notes/<id>/original` | `c.content` 是**字符串化的 JSON**，解析后取 `sentence_list`，每句带 `start_time` / `end_time`（毫秒） |
+| `/voicenotes/web/share/notes/<id>/sprouts` | 子笔记，多数为空，默认不取 |
+
+两处口径：
+
+1. 正文里的回听深链 `[00:54:00](https://getnotes.seek:3240)` 只在 App 里能跳，导出前还原成 `**00:54:00**`。
+2. 笔记正文自带 h3/h4 分级，走 `demote: false` 跳过标题降级，否则会降到 h5/h6。逐字稿按 90 秒切段拼成第二条消息。
+
+`h.c` 非 0 是失败（`h.e` 带原因）；ID 不存在返回 `10000 参数错误`。纯手写或图片笔记没有 `original`，静默跳过逐字稿。
 
 ## 登录态批量导出
 
@@ -159,6 +183,7 @@ SQLite 走 Node 22 内置 `node:sqlite`，只读，无依赖。
 ## 已知边界
 
 - 只对公开分享有效，私有分享拿不到。
+- biji.com 只有语音笔记带逐字稿；纯手写、纯图片笔记只有正文。
 - Perplexity 一次最多 20 轮，`has_next_page` 为真说明还有后续页。
 - 各站接口都是前端自用的私有接口，改版就断。
 - Codex 会自己收拾归档目录，压缩分片可能被合并或删掉。真要长期留档，先用 `export` 存成 markdown，别指望原始 rollout 一直在。

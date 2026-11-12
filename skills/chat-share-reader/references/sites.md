@@ -1,6 +1,6 @@
 # 各站点抓取细节
 
-记录三个站的实测接口、字段与坑。改代码前先读这里。
+记录各站的实测接口、字段与坑。改代码前先读这里。
 
 ## claude.ai/share/&lt;uuid&gt;
 
@@ -78,6 +78,62 @@ messages[i] = { id, conversationId, requestId, messageType: "user"|"assistant",
 `createTime` 是毫秒时间戳，`messageTimeWindows` 里另有按消息分组的时间窗。
 
 正文页是 `index.html` + `/page/page_comm/page_comm` 风格的 SPA 壳，`body.innerText` 初始为空，内容由 JS 渲染。所以如果走浏览器通道，必须等渲染完成。
+
+## biji.com/note/share_note/&lt;id&gt;（得到大脑 / Get 笔记）
+
+**通道：http**
+
+页面是 Vue SPA，`curl` 拿到的 HTML 只有 1.8 KB，一个 `<div id="app">` 加几个 script，`window.__INITIAL_STATE__` 是空对象。
+
+浏览器渲染有两条坑：
+
+1. **桌面视口整屏空白**。布局按移动端写，桌面 UA 下没有内容，截图纯白，`body.innerText` 为空。必须 `set device` 移动端或窄视口才出内容。
+2. **正文懒加载**。即便移动端视口拿到文本，也会整段丢失。实测漏掉整个「✨ 课堂金句」小节，肉眼对比才发现。
+
+正确做法是绕开页面，直连前端自用的分享接口。三个接口都免认证，不需要 cookie、Referer，也不校验 UA（桌面 UA 直接 200）：
+
+```
+GET https://get-notes.luojilab.com/voicenotes/web/share/notes/<id>
+GET https://get-notes.luojilab.com/voicenotes/web/share/notes/<id>/original
+GET https://get-notes.luojilab.com/voicenotes/web/share/notes/<id>/sprouts?limit=20
+```
+
+第一个接口返回信封 `{ h, c }`，`h = { c: 状态码, e: 错误信息, s: 服务器时间戳, t: 耗时 }`。`h.c` 为 0 才是成功，此时正文在：
+
+```
+c.author.nickname / c.author.avatar
+c.note.title
+c.note.content             # markdown 原文，语音笔记约 8-9 KB
+c.note.body_text           # 极短，不是正文，别当全文用
+c.note.note_type           # class_audio 表示课堂/会议类语音笔记
+c.note.tabs                # 实测为空数组，前端的分栏是自己按标题切的
+c.note.tags[]
+```
+
+`c.note.content` 的固定结构（语音笔记）：
+
+```
+### 📑 智能总结      → #### 课程信息 / #### 知识精讲 / #### 📖 课堂实录
+### 🖍️ 重点速览      → #### 🚩 考点重点 / #### 💡 核心概念 / #### ✨ 课堂金句 / #### 📝 待办事项
+```
+
+「课堂实录」里的段落带回听深链 `[00:54:00](https://getnotes.seek:3240)`，只在 App 内可跳，导出前替换成 `**00:54:00**`。
+
+第二个接口给逐字稿，注意 `c.content` 是**字符串化的 JSON**，要二次 `JSON.parse`：
+
+```
+{ sentence_list: [ { start_time, end_time, text, json_text,
+                     sentence_end, speaker_id, speaker_name, is_me } ],
+  task_status }
+```
+
+`start_time` / `end_time` 是毫秒。一小时课程约 560 句、250 KB。`speaker_name` 实测恒为空，不做说话人分离。纯手写或纯图片笔记没有这个接口，会 404，跳过即可。
+
+第三个接口给子笔记（枝叶），`c = { tasks: [], has_more }`，普通分享笔记为空。
+
+失败形态：ID 不存在返回 `{ h: { c: 10000, e: "参数错误" } }`；分享被取消或删除时 `c.note` 缺失。
+
+另一个容易踩的坑：`note.content` 自带 h3/h4 分级，走通用 `buildDoc` 会被 `demoteHeadings` 再降两级变成 h5/h6。站点模块返回 `demote: false` 跳过降级。
 
 ## opencli 后端的使用约束
 

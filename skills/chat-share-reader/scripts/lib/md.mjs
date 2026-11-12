@@ -47,7 +47,7 @@ export function demoteHeadings(text) {
     .join('\n');
 }
 
-export function buildDoc({ title, url, source, channel, messages, note }) {
+export function buildDoc({ title, url, source, channel, messages, note, demote = true }) {
   const chars = messages.reduce((n, m) => n + m.body.length, 0);
   const sep = isZh ? '：' : ': ';
   const field = (zh, en, v) => `- ${t(zh, en)}${sep}${v}`;
@@ -66,7 +66,8 @@ export function buildDoc({ title, url, source, channel, messages, note }) {
     lines.push('');
     lines.push(`## ${role(m.role)}${stamp ? ' · ' + stamp : ''}`);
     lines.push('');
-    lines.push(demoteHeadings(m.body.trim()));
+    // 笔记类来源（biji）正文本身就是完整文档，标题不再降级
+    lines.push(demote ? demoteHeadings(m.body.trim()) : m.body.trim());
   }
   return lines.join('\n') + '\n';
 }

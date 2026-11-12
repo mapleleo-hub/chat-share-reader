@@ -20,14 +20,15 @@ Only **Node.js 22+** is required. The rest is optional and only unlocks more sit
 | Chrome or Edge | Claude, Perplexity, Grok unavailable |
 | Convolvger (Python 3.12+ or uv) | Gemini, DeepSeek, Kimi, Qwen unavailable |
 
-Works with Node alone: ChatGPT and WorkBuddy share links, plus the JSONL session stores (Claude Code, Codex, pi, Oh My Pi).
+Works with Node alone: ChatGPT, WorkBuddy and Biji (得到大脑) share links, plus the JSONL session stores (Claude Code, Codex, pi, Oh My Pi).
 
-## Share links: nine sites
+## Share links: ten sites
 
 | Site | URL shape | Channel |
 | --- | --- | --- |
 | ChatGPT | `chatgpt.com/share/<uuid>` | HTTP |
 | WorkBuddy | `workbuddy.link/p/<id>` | HTTP |
+| Biji (得到大脑) | `biji.com/note/share_note/<id>` | HTTP |
 | Gemini | `gemini.google.com/share/<id>` | Convolvger |
 | DeepSeek | `chat.deepseek.com/share/<id>` | Convolvger |
 | Kimi | `kimi.com/share/<id>` | Convolvger |
@@ -35,6 +36,8 @@ Works with Node alone: ChatGPT and WorkBuddy share links, plus the JSONL session
 | Claude | `claude.ai/share/<uuid>` | browser |
 | Perplexity | `perplexity.ai/search/<uuid>` | browser |
 | Grok | `grok.com/share/<id>` | browser |
+
+Biji is a voice-note site rather than a chat site. An export carries two parts: the organized note and a timestamped transcript. Only the public share API works. Rendering the page gives less, because the desktop viewport is blank and the body lazy-loads.
 
 Two browser backends, picked automatically: [opencli](https://github.com/jackwener/opencli) if installed, otherwise a built-in DevTools Protocol client using Node 22's `WebSocket` with zero npm dependencies.
 

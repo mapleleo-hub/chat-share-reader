@@ -19,12 +19,13 @@ import * as claude from './sites/claude.mjs';
 import * as gemini from './sites/gemini.mjs';
 import * as grok from './sites/grok.mjs';
 import * as perplexity from './sites/perplexity.mjs';
+import * as biji from './sites/biji.mjs';
 import * as vendorOnly from './sites/vendor-only.mjs';
 import * as vendor from './lib/vendor.mjs';
 import * as backend from './lib/backend/index.mjs';
 import { buildDoc, normalizeMessages, safeName } from './lib/md.mjs';
 
-const SITES = [workbuddy, chatgpt, claude, gemini, grok, perplexity, vendorOnly];
+const SITES = [workbuddy, chatgpt, claude, gemini, grok, perplexity, biji, vendorOnly];
 
 function parseArgs(argv) {
   const urls = [];
@@ -138,6 +139,7 @@ async function runOne(url, opts) {
     channel: site.channel,
     messages,
     note: result.note,
+    demote: result.demote,
   });
 
   if (opts.stdout) return { site: site.name, title: result.title, messages: messages.length, md };
