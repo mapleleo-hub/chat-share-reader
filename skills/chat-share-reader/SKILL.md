@@ -1,6 +1,6 @@
 ---
 name: chat-share-reader
-description: "Export, back up, or archive AI chat conversations to markdown. Two inputs: public share links (ChatGPT, Claude, Gemini, Grok, Perplexity, DeepSeek, Kimi, Qwen, WorkBuddy, biji.com/得到大脑) and 15 local agent session stores (Claude Code, Codex, Cursor, opencode, Cline, Gemini CLI, Copilot CLI, Kimi Code, Antigravity, Hermes, pi, Oh My Pi, zcode, Qwen Code, Command Code). Also bulk-exports your own biji.com voice notes (class/meeting recordings) by date range, with optional transcripts. Search past sessions by keyword, filter by working directory, batch export, read compressed .jsonl.zst archives, and pipe a previous session's context into the current conversation. 导出、备份、归档 AI 对话为 markdown，支持公开分享链接和 15 种本机 agent 会话记录，可按关键词搜索、按工作目录筛选、批量导出，能读压缩归档；另支持按日期区间批量导出自己账号下的得到笔记录音笔记（含逐字稿）。"
+description: "Export, back up, or archive AI chat conversations to markdown. Two inputs: public share links (ChatGPT, Claude, Gemini, Grok, Perplexity, DeepSeek, Kimi, Qwen, WorkBuddy, biji.com/得到大脑) and 15 local agent session stores (Claude Code, Codex, Cursor, opencode, Cline, Gemini CLI, Copilot CLI, Kimi Code, Antigravity, Hermes, pi, Oh My Pi, zcode, Qwen Code, Command Code). Export the current session with no arguments, or search past sessions by keyword, filter by working directory, batch export, read compressed .jsonl.zst archives, and pipe a session's context into the current conversation. Home paths, emails, and tokens are redacted on export by default. Also bulk-exports your own biji.com voice notes (class/meeting recordings) by date range, with optional transcripts. 导出、备份、归档 AI 对话为 markdown，支持公开分享链接和 15 种本机 agent 会话记录；不传参数即导出当前会话，可按关键词搜索、按工作目录筛选、批量导出，能读压缩归档，导出默认脱敏家目录、邮箱与令牌；另支持按日期区间批量导出自己账号下的得到笔记录音笔记（含逐字稿）。"
 license: MIT
 metadata:
   openclaw:
@@ -61,12 +61,14 @@ CSR_LANG=en node scripts/sessions.mjs list --limit 5
 
 ```bash
 # 分享链接（十个站点）
-node scripts/read.mjs <url> [更多 url...] [--out DIR] [--stdout] [--json]
+node scripts/read.mjs <url> [更多 url...] [--out DIR] [--stdout] [--json] [--redact off|home|strict]
 
 # 本地会话（16 个源）
 node scripts/sessions.mjs list [--source claude|codex|workbuddy|all] [--limit 20] [--cwd 子串]
 node scripts/sessions.mjs search <关键词> [--limit 20] [--cwd 子串]
-node scripts/sessions.mjs export <id 前缀或路径> [--stdout] [--full] [--json]
+node scripts/sessions.mjs export [<id 前缀或路径>] [--current] [--stdout] [--full] [--json]
+node scripts/sessions.mjs export --redact off            # 要完整原文时
+node scripts/sessions.mjs export --redact strict         # 额外遮邮箱、令牌、内网 IP
 
 # 得到笔记账号内录音笔记批量导出（要 opencli 取登录态）
 node scripts/biji-notes.mjs list --since 2026-11-01 [--type class_audio]
@@ -74,6 +76,16 @@ node scripts/biji-notes.mjs export --since 2026-11-11 --until 2026-11-12 --out D
 ```
 
 典型用法：`sessions.mjs export <id> --stdout` 接管道，把上一轮会话的上下文喂给当前的 agent。
+
+用户说「把这个对话存下来」时，直接 `node scripts/sessions.mjs export --stdout`，不给 id 也不给路径。它会先读宿主 agent 传进环境的会话标识（`CODEBUDDY_SESSION_ID`、`CLAUDE_SESSION_ID`、`CODEX_THREAD_ID` 等），读不到再按工作目录 + 最近 60 分钟活跃时间挑一个，并在 stderr 打印挑中的是哪个。这条兜底是启发式的：同目录同时开着两个会话时可能挑错，看到打印出来的 id 不对就改用显式 id。
+
+## 脱敏
+
+导出默认脱敏（`home` 档）：家目录换成 `~`，同机其他用户的家目录换成 `~user`，目录结构保留，读起来不影响理解。文件头会写一行 `脱敏：home (N 处)`。
+
+三档：`off` 原文、`home` 默认、`strict` 再加遮邮箱、令牌（`sk-`、`ghp_`、JWT、Bearer）、内网 IP。公网 IP 和 commit hash 不动，这些通常是有意义的信息。`read.mjs`、`sessions.mjs`、`bulk.mjs`、`biji-notes.mjs` 都走同一条路径（`lib/redact.mjs`），vendor 通道产出的是别人拼好的 markdown，落盘后就地再过一遍。
+
+脱敏是幂等的，对已脱敏的文件再跑一次不会有二次变化。`--json` 输出里 `segments` 保持原样，那是给下游继续读文件的句柄；`title`、`body` 这些会被展示或分享的字段才脱敏。
 
 ## 分享链接
 
@@ -189,6 +201,7 @@ cdp 后端首次访问有 Cloudflare 挑战的站点时会打印提示，等你�
 node scripts/sessions.mjs list --limit 20             # 按修改时间倒序
 node scripts/sessions.mjs search "关键词"              # 只搜对话正文，不搜文件原文
 node scripts/sessions.mjs search "关键词" --cwd 项目名  # 先按工作目录筛，快很多
+node scripts/sessions.mjs export                      # 当前会话
 node scripts/sessions.mjs export 01a1af92 --stdout    # id 前缀匹配，同线程分片自动合并
 node scripts/sessions.mjs export 01a1af92 --json      # 结构化，含 segments 与每条消息
 node scripts/sessions.mjs export <路径> --full         # 带上思考与工具调用
@@ -205,6 +218,7 @@ node scripts/sessions.mjs export <路径> --full         # 带上思考与工具
 7. **fork 分片**：同一会话可能有十几个 `rollout-<时间>-<线程>_<分支>.jsonl`，分片名会用新 id，但 `session_meta.session_id` 仍是父线程的。`export` 按它归组、按消息时间排序、按角色加正文前缀去重。
 8. **WorkBuddy**：`~/.workbuddy/projects/<工作区 slug>/<sessionId>.jsonl`，同级 `<sessionId>/tool-results/` 要排除。每条用户消息前挂 `<system-reminder>` 包住的 user_info、identity 文件和自定义指令，必须整块剥掉，否则标题会变成 `<system-reminder`。
 9. **search 只匹配正文**：原文里一条记忆注入带过项目路径，就能让几十个无关会话命中。所以 search 要先 parse 成 messages 再匹配，不能对文件原文 `indexOf`。
+10. **当前会话识别**：`CODEBUDDY_SESSION_ID`（WorkBuddy）本机实测可用。`CLAUDE_SESSION_ID`、`CODEX_THREAD_ID`、`QWEN_SESSION_ID`、`KIMI_SESSION_ID` 按社区实现写入，本机没装这些 agent，未验证。取不到就回落到「工作目录匹配 + 最近 60 分钟」，这条是启发式的，会有挑错的可能。
 
 SQLite 走 Node 22 内置 `node:sqlite`，只读，无依赖。
 

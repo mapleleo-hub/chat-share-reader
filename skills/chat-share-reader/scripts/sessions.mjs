@@ -5,7 +5,11 @@
 //   node sessions.mjs sources
 //   node sessions.mjs list [--source <名字>|all] [--limit 20] [--cwd <子串>] [--json]
 //   node sessions.mjs search <关键词> [--source ...] [--limit 20] [--cwd <子串>] [--json]
-//   node sessions.mjs export <会话 id 或文件路径> [--out DIR] [--stdout] [--full] [--json]
+//   node sessions.mjs export [<会话 id 或文件路径>] [--current] [--out DIR] [--stdout] [--full]
+//                            [--json] [--redact off|home|strict] [--within 分钟]
+//
+// export 不给目标时导当前会话：先认宿主 agent 的会话标识环境变量，
+// 认不出再按工作目录和最近活跃时间挑，挑中哪个会打印出来。
 //
 // 和 read.mjs 的分工：那个处理别人发来的分享链接，这个读你自己机器上的会话文件。
 import { readdir, stat, writeFile, mkdir } from 'node:fs/promises';
@@ -26,6 +30,7 @@ import * as workbuddyLocal from './lib/local/workbuddy.mjs';
 import { makeParser } from './lib/local/jsonl-generic.mjs';
 import { lines as readLines, readText } from './lib/local/zst.mjs';
 import { buildDoc, safeName, normalizeMessages } from './lib/md.mjs';
+import { createRedactor } from './lib/redact.mjs';
 import { t, role as rn } from './lib/i18n.mjs';
 
 const home = os.homedir();
@@ -324,7 +329,18 @@ function fmtTime(value) {
 
 function parseArgs(argv) {
   const [cmd, ...rest] = argv;
-  const opts = { source: 'all', limit: 20, cwd: '', out: './sessions', stdout: false, full: false, json: false };
+  const opts = {
+    source: 'all',
+    limit: 20,
+    cwd: '',
+    out: './sessions',
+    stdout: false,
+    full: false,
+    json: false,
+    current: false,
+    redact: 'home',
+    within: 60,
+  };
   const positional = [];
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -335,6 +351,10 @@ function parseArgs(argv) {
     else if (a === '--stdout') opts.stdout = true;
     else if (a === '--full') opts.full = true;
     else if (a === '--json') opts.json = true;
+    else if (a === '--current') opts.current = true;
+    else if (a === '--redact') opts.redact = rest[++i] || 'home';
+    else if (a === '--no-redact') opts.redact = 'off';
+    else if (a === '--within') opts.within = Number(rest[++i]) || 60;
     else positional.push(a);
   }
   const names = opts.source === 'all' ? Object.keys(SOURCES) : [opts.source];
@@ -415,6 +435,9 @@ async function matchCwd(item, needle) {
   const lower = normPath(needle);
   if (item.meta && normPath(item.meta.cwd).includes(lower)) return true;
   if (normPath(item.file).includes(lower)) return true;
+  // 有些源（WorkBuddy）把会话按工作区 slug 分目录，目录名是 cwd 转写来的，
+  // 路径里没有可读的工作目录，只能按 slug 比。
+  if (item.file && path.basename(path.dirname(item.file)) === slugOfCwd(needle)) return true;
   // 路径里没写工作目录的源（codex/claude），读头几行的 cwd
   try {
     for await (const line of headLines(item.file, 5)) {
@@ -433,6 +456,76 @@ async function matchCwd(item, needle) {
     /* 读不动就按不匹配处理 */
   }
   return false;
+}
+
+// E:\01-project\00-workspace -> e-01-project-00-workspace
+function slugOfCwd(p) {
+  return String(p || '')
+    .toLowerCase()
+    .replace(/[\\/:]+/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+// 认当前会话。两条依据，先准确后兜底：
+//   1. 宿主 agent 把自己的会话 id 传进环境变量，最准
+//   2. 没有环境变量时，按工作目录匹配 + 最近活跃时间挑一个
+// 第二条是启发式的：同一个目录同时开着两个 agent 会话时可能挑错，所以挑中哪个要报出来。
+const CURRENT_ENV = [
+  ['workbuddy', ['CODEBUDDY_SESSION_ID', 'WORKBUDDY_SESSION_ID']],
+  ['claude', ['CLAUDE_SESSION_ID', 'CLAUDE_CODE_SESSION_ID']],
+  ['codex', ['CODEX_THREAD_ID', 'CODEX_SESSION_ID']],
+  ['qwen', ['QWEN_SESSION_ID']],
+  ['kimi', ['KIMI_SESSION_ID']],
+  ['gemini-cli', ['GEMINI_SESSION_ID']],
+  ['cursor', ['CURSOR_SESSION_ID']],
+];
+
+async function findCurrent(opts, names) {
+  const available = SESSION_ENV_SCAN(names);
+
+  for (const [name, vars] of available) {
+    for (const v of vars) {
+      const id = String(process.env[v] || '').trim();
+      if (!id || id.length < 6) continue;
+      const items = await discover([name]);
+      const hit = items.filter(
+        (x) => String(x.id || '').includes(id) || String(x.file || x.ref || '').includes(id)
+      );
+      if (hit.length) return { picked: hit, items, how: `${name} ${id} · ${v}` };
+    }
+  }
+
+  const items = await discover(names);
+  const windowMs = Math.max(1, opts.within || 60) * 60000;
+  const now = Date.now();
+  const recent = items.filter((x) => now - x.time <= windowMs);
+  if (!recent.length) {
+    throw new Error(
+      t(
+        `最近 ${opts.within} 分钟内没有活跃会话，用 list 找一个再指定 id`,
+        `No session active within ${opts.within} min; run list and pass an id`
+      )
+    );
+  }
+
+  const cwd = opts.cwd || process.cwd();
+  const matched = [];
+  for (const it of recent.slice(0, 20)) {
+    if (await matchCwd(it, cwd)) matched.push(it);
+  }
+  const pool = matched.length ? matched : recent;
+  const seed = pool[0];
+  return {
+    picked: [seed],
+    items,
+    how: `${seed.source} ${seed.id} · ${cwd} · ${matched.length ? 'cwd' : 'recent'}`,
+  };
+}
+
+function SESSION_ENV_SCAN(names) {
+  return CURRENT_ENV.filter(([name]) => names.includes(name));
 }
 
 async function cmdSearch(keyword, opts, names) {
@@ -523,18 +616,52 @@ async function guessSource(file) {
   return 'claude';
 }
 
-async function cmdExport(target, opts, names) {
-  if (!target) throw new Error(t('要给会话 id 或文件路径', 'Need a session id or file path'));
+// 一个会话可能被拆成十几个 rollout 分片（Codex 的 fork），id 前缀、family、
+// 文件名任一命中都算；定了种子之后再按 session_meta 把同族分片补齐。
+async function expandShards(picked, items) {
+  const seedSid = await sessionIdOf(picked[0].file || String(picked[0].ref));
+  if (seedSid) {
+    for (const it of items) {
+      if (!it.file || picked.includes(it)) continue;
+      if (it.source !== picked[0].source) continue;
+      if (String(it.file).includes(seedSid)) picked.push(it);
+    }
+    // 文件名里带父线程 id 的分片上面就收完了；一个都没补到说明分片改了名字，
+    // 这时才逐个读文件头比对 session_meta，别让每次导出都全量扫一遍。
+    if (picked.length <= 1) {
+      for (const it of items) {
+        if (!it.file || picked.includes(it)) continue;
+        if (it.source !== picked[0].source) continue;
+        if ((await sessionIdOf(it.file)) === seedSid) picked.push(it);
+      }
+    }
+  }
 
+  picked.sort((a, b) => a.time - b.time);
+  const seenFile = new Set();
+  return picked.filter((x) => {
+    const k = x.file || String(x.ref);
+    if (seenFile.has(k)) return false;
+    seenFile.add(k);
+    return true;
+  });
+}
+
+async function cmdExport(target, opts, names) {
+  // 不给目标就是导当前会话。零参数是 agent 在会话里最自然的用法：
+  // 「把这段对话存下来」，不应该要求它先去 list 查一个 id。
+  const wantCurrent = opts.current || !target;
   let picked = [];
 
-  if (existsSync(target)) {
+  if (wantCurrent) {
+    const cur = await findCurrent(opts, names);
+    console.error(t(`当前会话：${cur.how}`, `current session: ${cur.how}`));
+    picked = await expandShards(cur.picked, cur.items);
+  } else if (existsSync(target)) {
     const name = await guessSource(target);
     picked = [{ name, ref: target, file: target, time: 0 }];
   } else {
     const items = await discover(names);
-    // 一个会话可能被拆成十几个 rollout 分片（Codex 的 fork），id 前缀、family、
-    // 文件名任一命中都算，全部收进来在下面按时间拼回去。
     picked = items.filter(
       (x) =>
         (x.id && String(x.id).includes(target)) ||
@@ -542,33 +669,7 @@ async function cmdExport(target, opts, names) {
         (x.ref && typeof x.ref === 'string' && path.basename(x.ref).includes(target))
     );
     if (!picked.length) throw new Error(t('找不到匹配的会话：', 'No matching session: ') + target);
-
-    // 文件名里带父线程 id 的分片直接收；一个都没补到说明分片改了名字，
-    // 这时才逐个读文件头比对 session_meta，别让每次导出都全量扫一遍。
-    const seedSid = await sessionIdOf(picked[0].file || String(picked[0].ref));
-    if (seedSid) {
-      for (const it of items) {
-        if (!it.file || picked.includes(it)) continue;
-        if (it.source !== picked[0].source) continue;
-        if (String(it.file).includes(seedSid)) picked.push(it);
-      }
-      if (picked.length <= 1) {
-        for (const it of items) {
-          if (!it.file || picked.includes(it)) continue;
-          if (it.source !== picked[0].source) continue;
-          if ((await sessionIdOf(it.file)) === seedSid) picked.push(it);
-        }
-      }
-    }
-
-    picked.sort((a, b) => a.time - b.time);
-    const seenFile = new Set();
-    picked = picked.filter((x) => {
-      const k = x.file || String(x.ref);
-      if (seenFile.has(k)) return false;
-      seenFile.add(k);
-      return true;
-    });
+    picked = await expandShards(picked, items);
   }
 
   const cfg = SOURCES[picked[0].name];
@@ -608,14 +709,22 @@ async function cmdExport(target, opts, names) {
     .slice(0, 24)
     .trim();
 
+  // 标题里常带路径（第一句就是「帮我看看 C:\Users\x\... 报错」），
+  // 落成文件名前也要过一遍脱敏，否则用户名会留在文件名上。
+  const r = createRedactor(opts.redact);
+  const safeTitle = r.apply(title);
+
   if (opts.json) {
     return console.log(
       JSON.stringify(
         {
           source: picked[0].name,
-          title,
+          title: safeTitle,
+          // segments 是给下游继续读文件的句柄，保持原样不脱敏；
+          // 脱敏只作用于会被展示、复制、分享的内容字段。
           segments: picked.map((p) => p.file || String(p.ref)),
-          messages: messages.map((m) => ({ role: m.role, time: m.at || m.time, body: m.body })),
+          redact: r.level,
+          messages: messages.map((m) => ({ role: m.role, time: m.at || m.time, body: r.apply(m.body) })),
         },
         null,
         2
@@ -630,13 +739,16 @@ async function cmdExport(target, opts, names) {
     channel: 'local/' + picked[0].name,
     messages,
     note,
+    redact: opts.redact,
   });
 
   if (opts.stdout) return console.log(md);
   await mkdir(opts.out, { recursive: true });
-  const out = path.resolve(opts.out, safeName(title) + '.md');
+  const out = path.resolve(opts.out, safeName(safeTitle) + '.md');
   await writeFile(out, md, 'utf8');
-  console.log(`OK ${picked[0].name} ${messages.length} 条${picked.length > 1 ? `（合并 ${picked.length} 个分片）` : ''} -> ${out}`);
+  console.log(
+    `OK ${picked[0].name} ${messages.length} 条${picked.length > 1 ? `（合并 ${picked.length} 个分片）` : ''}${opts.redact === 'off' ? '' : t(` · 脱敏 ${opts.redact}`, ` · redacted ${opts.redact}`)} -> ${out}`
+  );
 }
 
 function cmdSources() {
@@ -667,7 +779,11 @@ try {
         '  node sessions.mjs sources\n' +
         '  node sessions.mjs list [--source <名字>|all] [--limit 20] [--cwd <子串>] [--json]\n' +
         '  node sessions.mjs search <关键词> [--source ...] [--limit 20] [--cwd <子串>] [--json]\n' +
-        '  node sessions.mjs export <id 或路径> [--out DIR] [--stdout] [--full] [--json]'
+        '  node sessions.mjs export [<id 或路径>] [--current] [--out DIR] [--stdout] [--full] [--json]\n' +
+        '                          [--redact off|home|strict] [--within 60]\n' +
+        '\n' +
+        'export 不给目标时导当前会话（认宿主 agent 的会话标识，认不出按工作目录 + 最近活跃挑）。\n' +
+        '脱敏默认 home：家目录换成 ~，strict 再遮邮箱、令牌、内网 IP，off 导出原文。'
     );
     process.exit(2);
   }

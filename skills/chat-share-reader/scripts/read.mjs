@@ -24,18 +24,21 @@ import * as vendorOnly from './sites/vendor-only.mjs';
 import * as vendor from './lib/vendor.mjs';
 import * as backend from './lib/backend/index.mjs';
 import { buildDoc, normalizeMessages, safeName } from './lib/md.mjs';
+import { createRedactor } from './lib/redact.mjs';
 
 const SITES = [workbuddy, chatgpt, claude, gemini, grok, perplexity, biji, vendorOnly];
 
 function parseArgs(argv) {
   const urls = [];
-  const opts = { out: './chat-shares', stdout: false, json: false, noVendor: false };
+  const opts = { out: './chat-shares', stdout: false, json: false, noVendor: false, redact: 'home' };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--out') opts.out = argv[++i];
     else if (a === '--stdout') opts.stdout = true;
     else if (a === '--json') opts.json = true;
     else if (a === '--no-vendor') opts.noVendor = true;
+    else if (a === '--redact') opts.redact = argv[++i] || 'home';
+    else if (a === '--no-redact') opts.redact = 'off';
     else if (a.startsWith('--')) throw new Error('未知参数：' + a);
     else urls.push(a);
   }
@@ -68,6 +71,16 @@ function targetFile(dir, title, url) {
   return path.resolve(dir, `${base}-${id || Date.now()}.md`);
 }
 
+// vendor 通道产出的是别人拼好的 markdown，不经过 buildDoc，只能落盘后再过一遍脱敏。
+// 就地重写，替换后内容不变时跳过写入，避免无谓改动 mtime。
+async function redactFile(file, level) {
+  if (level === 'off') return;
+  const r = createRedactor(level);
+  const before = await readFile(file, 'utf8');
+  const after = r.apply(before);
+  if (after !== before) await writeFile(file, after, 'utf8');
+}
+
 // vendor 通道：先 inspect 拿标题与消息数，再 export 到最终文件名
 async function viaVendor(url, opts, siteName) {
   const info = await vendor.inspect(url);
@@ -81,12 +94,13 @@ async function viaVendor(url, opts, siteName) {
     await vendor.exportMarkdown(url, tmp);
     const md = await readFile(tmp, 'utf8');
     await unlink(tmp).catch(() => {});
-    return { site: siteName, channel: 'vendor', title, messages: count, md };
+    return { site: siteName, channel: 'vendor', title, messages: count, md: createRedactor(opts.redact).apply(md) };
   }
 
   await mkdir(opts.out, { recursive: true });
   const file = targetFile(opts.out, title, url);
   await vendor.exportMarkdown(url, file);
+  await redactFile(file, opts.redact);
   return { site: siteName, channel: 'vendor', title, messages: count, file };
 }
 
@@ -140,6 +154,7 @@ async function runOne(url, opts) {
     messages,
     note: result.note,
     demote: result.demote,
+    redact: opts.redact,
   });
 
   if (opts.stdout) return { site: site.name, title: result.title, messages: messages.length, md };
@@ -161,8 +176,10 @@ async function runOne(url, opts) {
 const { urls, opts } = parseArgs(process.argv.slice(2));
 if (!urls.length) {
   console.error(t(
-    '用法：node read.mjs <url> [url2 ...] [--out DIR] [--stdout] [--json] [--no-vendor]',
-    'Usage: node read.mjs <url> [url2 ...] [--out DIR] [--stdout] [--json] [--no-vendor]'
+    '用法：node read.mjs <url> [url2 ...] [--out DIR] [--stdout] [--json] [--no-vendor]\n' +
+      '      [--redact off|home|strict]   脱敏档位，默认 home',
+    'Usage: node read.mjs <url> [url2 ...] [--out DIR] [--stdout] [--json] [--no-vendor]\n' +
+      '       [--redact off|home|strict]   redaction level, default home'
   ));
   process.exit(2);
 }

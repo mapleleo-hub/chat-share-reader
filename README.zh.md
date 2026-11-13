@@ -24,19 +24,34 @@ npx skills add mapleleo-hub/chat-share-reader
 
 ```bash
 # 分享链接
-node skills/chat-share-reader/scripts/read.mjs <url> [更多 url...] [--out DIR] [--stdout] [--json]
+node skills/chat-share-reader/scripts/read.mjs <url> [更多 url...] [--out DIR] [--stdout] [--json] [--redact off|home|strict]
 
 # 本地会话
 node skills/chat-share-reader/scripts/sessions.mjs sources
 node skills/chat-share-reader/scripts/sessions.mjs list --limit 20 --cwd 项目名
 node skills/chat-share-reader/scripts/sessions.mjs search "关键词" --cwd 项目名
+node skills/chat-share-reader/scripts/sessions.mjs export                 # 当前会话
 node skills/chat-share-reader/scripts/sessions.mjs export <id> --stdout
 node skills/chat-share-reader/scripts/sessions.mjs export <id> --json
 ```
 
+`export` 不给参数就是导当前会话。它先读宿主 agent 传进环境的会话标识（`CODEBUDDY_SESSION_ID`、`CLAUDE_SESSION_ID`、`CODEX_THREAD_ID` 等），读不到就按「工作目录里的最近会话」挑，挑中哪个会打印出来。兜底是启发式的，只有 WorkBuddy 的变量在本机验证过。
+
 最后一个配管道最有用：把某次会话导出来，直接喂给当前的 agent。
 
 `search` 只匹配对话正文，不会因为系统提示或记忆注入里出现过某个词就误报。`export` 会把这个会话的所有 fork 分片按时间合并去重，压缩成 `.jsonl.zst` 的归档会话也能直接读。
+
+## 脱敏
+
+导出默认脱敏。家目录换成 `~`，同机其他用户的家目录换成 `~user`，目录结构保留。文件头会记下档位和替换了多少处。
+
+```bash
+--redact off      # 原文
+--redact home     # 默认
+--redact strict   # 再遮邮箱、令牌（sk-、ghp_、JWT、Bearer）、内网 IP
+```
+
+公网 IP 和 commit hash 不动，这些通常是有意义的信息。脱敏写在 `lib/redact.mjs`，所有导出路径都走它，第三方 Convolvger 通道产出的 markdown 也会就地过一遍。脱敏幂等，对已脱敏的文件再跑一次不会有二次变化。
 
 ## 依赖
 

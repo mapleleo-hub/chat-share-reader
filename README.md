@@ -61,15 +61,30 @@ Per-source paths, record shapes, and known traps: [`references/sessions.md`](ski
 ```bash
 node skills/chat-share-reader/scripts/sessions.mjs list --limit 20
 node skills/chat-share-reader/scripts/sessions.mjs search "keyword"
+node skills/chat-share-reader/scripts/sessions.mjs export              # the session you are in right now
 node skills/chat-share-reader/scripts/sessions.mjs export <id-prefix> --stdout
 ```
 
+`export` with no argument exports the session you are currently in. It reads the host agent's session id from the environment (`CODEBUDDY_SESSION_ID`, `CLAUDE_SESSION_ID`, `CODEX_THREAD_ID`, ...), and falls back to "newest session in this working directory within the last hour". The fallback is a heuristic, so it prints which session it picked. Only the WorkBuddy variable is verified on a real machine; the rest are written from community implementations.
+
 `export --stdout` pipes straight into another agent, which is the fastest way to carry a previous conversation's context forward.
+
+## Redaction
+
+Exports are redacted by default. Home directories become `~`, other users' on the same machine become `~user`; the directory structure stays readable. The header records the level and how many spots were replaced.
+
+```bash
+--redact off      # raw text
+--redact home     # default
+--redact strict   # also masks emails, tokens (sk-, ghp_, JWT, Bearer), private IPs
+```
+
+Public IPs and commit hashes are left alone: those usually carry meaning. Redaction lives in `lib/redact.mjs` and applies to every export path, including the third-party Convolvger channel. It is idempotent, so re-running on an already redacted file changes nothing.
 
 ## Usage
 
 ```bash
-node skills/chat-share-reader/scripts/read.mjs <url> [more urls...] [--out DIR] [--stdout] [--json]
+node skills/chat-share-reader/scripts/read.mjs <url> [more urls...] [--out DIR] [--stdout] [--json] [--redact off|home|strict]
 ```
 
 Default output goes to `./chat-shares/<title>.md`. `--stdout` prints, `--json` returns structured results, `--no-vendor` skips Convolvger for debugging.
