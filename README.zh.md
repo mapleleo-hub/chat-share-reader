@@ -154,6 +154,22 @@ node scripts/biji-notes.mjs export --since 2026-11-11 --until 2026-11-12 --out D
 
 `skills/chat-share-reader/scripts/sites/` 下一个模块，导出 `name`、`channel`、`match(url)`、`read(url, { session })`，登记进 `read.mjs` 的 `SITES` 数组。本地会话源放在 `scripts/lib/local/`，登记进 `sessions.mjs` 的 `SOURCES`。
 
+## 开发
+
+零依赖，不用装。测试走 Node 自带的 runner：
+
+```bash
+cd skills/chat-share-reader
+npm test                 # 默认语言
+CSR_LANG=zh npm test     # 输出语言是运行时开关，两种都要跑
+```
+
+CI 在 Ubuntu 和 Windows 上各跑一遍，Node 22，两种语言。
+
+覆盖：脱敏三档与幂等、不可信内容围栏与标题降级、分片合并（去重、重排、无时间的工具消息）、两个 CLI 的启动与退出码。
+
+不覆盖：`scripts/sites/` 下的站点适配器。它们打的是私有接口，还要登录态，单测里失败分不清是改坏了还是站点改版了。改完手动 `node scripts/read.mjs <url> --stdout` 验一次。
+
 ## 调研过，别重复找
 
 - **Convolvger**（PyPI `convolvger`）：8 个 provider，本地优先，无 cookie 无 API key。Gemini、DeepSeek、Kimi、Qwen 四站直接交给它。

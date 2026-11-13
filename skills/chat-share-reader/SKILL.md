@@ -183,6 +183,7 @@ cdp 后端首次访问有 Cloudflare 挑战的站点时会打印提示，等你�
 3. **Perplexity 的参数不能精简**。27 个 `supported_block_use_cases` 少一个，接口照样 200 但不下发回答正文。
 4. **Grok 的就绪判定不能用正文长度**。导航栏本身有 400 多字，要用消息容器出现作为信号。
 5. **opencli eval 只有一条限制**（改 `backend/opencli.mjs` 时相关）：单次入参超约 5k 字符会 SyntaxError。超过 4000 字符的页面脚本走明文分片，短脚本直接传，不要用 base64（会被安全扫描判成混淆载荷）。单引号、花括号、模板字符串在 `shell:false` 下都能原样传。
+6. **改 `lib/redact.mjs`、`lib/md.mjs`、`lib/merge.mjs` 先跑 `npm test`**。这三处坏了不报错：脱敏漏了会泄露路径，围栏破了消费方会执行正文里的指令，分片合并错会重复或乱序。测试覆盖这三块，改完必须是绿的。站点适配器（`scripts/sites/`）没有测试，改完手动 `node scripts/read.mjs <url> --stdout` 验一次。
 
 各站接口细节、数据结构、失败形态见 `references/sites.md`。加站点的方法见 `README.md`。
 

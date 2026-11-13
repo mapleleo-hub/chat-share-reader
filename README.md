@@ -117,6 +117,22 @@ node skills/chat-share-reader/scripts/biji-notes.mjs export --since 2026-11-11 -
 - Every endpoint here is a private API the site uses for its own frontend. No compatibility promises. They break on redesign.
 - Windsurf / Devin sessions are encrypted protobuf. JetBrains AI Assistant hides them in base64 JSON. Neither is supported.
 
+## Development
+
+No dependencies, no install step. Tests use the Node built-in runner:
+
+```bash
+cd skills/chat-share-reader
+npm test                 # default output language
+CSR_LANG=zh npm test     # the output language is a runtime switch; test both
+```
+
+CI runs the same suite on Ubuntu and Windows with Node 22, in both languages.
+
+Covered: redaction levels and idempotence, the untrusted-content fence and heading demotion, shard merging (dedupe, reordering, tool messages without timestamps), and that both CLIs start with the right exit codes.
+
+Not covered: the per-site adapters in `scripts/sites/`. They talk to private endpoints and need a signed-in browser profile, so a failure there is indistinguishable from a real regression in a unit test. Check them by hand with `node scripts/read.mjs <url> --stdout`.
+
 ## Prior art
 
 - **Convolvger** (PyPI `convolvger`): 8 providers, local-first, no cookies or API keys. Handles Gemini, DeepSeek, Kimi, Qwen.

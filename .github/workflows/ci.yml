@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows 必须进矩阵：路径脱敏和会话目录发现都有平台分支，
+        # 只在 Linux 跑会把 Windows 的回归放过去。
+        os: [ubuntu-latest, windows-latest]
+        node: [22]
+
+    defaults:
+      run:
+        working-directory: skills/chat-share-reader
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # 零依赖，没有 npm ci 这一步
+      - name: 测试（默认语言）
+        run: npm test
+
+      - name: 测试（CSR_LANG=zh）
+        run: npm test
+        env:
+          CSR_LANG: zh
+
+      - name: 入口能起来
+        run: node scripts/sessions.mjs sources

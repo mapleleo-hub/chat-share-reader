@@ -30,6 +30,7 @@ import * as workbuddyLocal from './lib/local/workbuddy.mjs';
 import { makeParser } from './lib/local/jsonl-generic.mjs';
 import { lines as readLines, readText } from './lib/local/zst.mjs';
 import { buildDoc, safeName, normalizeMessages } from './lib/md.mjs';
+import { expandShards, stitchMessages } from './lib/merge.mjs';
 import { createRedactor } from './lib/redact.mjs';
 import { t, role as rn } from './lib/i18n.mjs';
 
@@ -616,37 +617,6 @@ async function guessSource(file) {
   return 'claude';
 }
 
-// 一个会话可能被拆成十几个 rollout 分片（Codex 的 fork），id 前缀、family、
-// 文件名任一命中都算；定了种子之后再按 session_meta 把同族分片补齐。
-async function expandShards(picked, items) {
-  const seedSid = await sessionIdOf(picked[0].file || String(picked[0].ref));
-  if (seedSid) {
-    for (const it of items) {
-      if (!it.file || picked.includes(it)) continue;
-      if (it.source !== picked[0].source) continue;
-      if (String(it.file).includes(seedSid)) picked.push(it);
-    }
-    // 文件名里带父线程 id 的分片上面就收完了；一个都没补到说明分片改了名字，
-    // 这时才逐个读文件头比对 session_meta，别让每次导出都全量扫一遍。
-    if (picked.length <= 1) {
-      for (const it of items) {
-        if (!it.file || picked.includes(it)) continue;
-        if (it.source !== picked[0].source) continue;
-        if ((await sessionIdOf(it.file)) === seedSid) picked.push(it);
-      }
-    }
-  }
-
-  picked.sort((a, b) => a.time - b.time);
-  const seenFile = new Set();
-  return picked.filter((x) => {
-    const k = x.file || String(x.ref);
-    if (seenFile.has(k)) return false;
-    seenFile.add(k);
-    return true;
-  });
-}
-
 async function cmdExport(target, opts, names) {
   // 不给目标就是导当前会话。零参数是 agent 在会话里最自然的用法：
   // 「把这段对话存下来」，不应该要求它先去 list 查一个 id。
@@ -656,7 +626,7 @@ async function cmdExport(target, opts, names) {
   if (wantCurrent) {
     const cur = await findCurrent(opts, names);
     console.error(t(`当前会话：${cur.how}`, `current session: ${cur.how}`));
-    picked = await expandShards(cur.picked, cur.items);
+    picked = await expandShards(cur.picked, cur.items, sessionIdOf);
   } else if (existsSync(target)) {
     const name = await guessSource(target);
     picked = [{ name, ref: target, file: target, time: 0 }];
@@ -669,36 +639,18 @@ async function cmdExport(target, opts, names) {
         (x.ref && typeof x.ref === 'string' && path.basename(x.ref).includes(target))
     );
     if (!picked.length) throw new Error(t('找不到匹配的会话：', 'No matching session: ') + target);
-    picked = await expandShards(picked, items);
+    picked = await expandShards(picked, items, sessionIdOf);
   }
 
   const cfg = SOURCES[picked[0].name];
   if (!cfg) throw new Error(t('未知来源：', 'Unknown source: ') + picked[0].name);
 
-  const merged = [];
-  const seen = new Set();
-  let note = '';
-  for (const p of picked) {
-    const r = await cfg.parser.parse(p.ref, { full: opts.full });
-    note = note || r.note;
-    for (const m of r.messages) {
-      const key = m.role + '|' + m.body.slice(0, 300);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      merged.push(m);
-    }
-  }
+  const parts = [];
+  for (const p of picked) parts.push(await cfg.parser.parse(p.ref, { full: opts.full }));
 
-  // 分片按文件 mtime 拼不可靠（fork 会重写），按消息自带的 ISO 时间排。
-  // 工具消息没有时间，继承上一条的，避免被甩到最前面。
-  let carry = '';
-  for (const m of merged) {
-    if (m.at) carry = m.at;
-    else m.__sort = carry;
-  }
-  merged.sort((a, b) => String(a.at || a.__sort || '').localeCompare(String(b.at || b.__sort || '')));
-
-  const messages = normalizeMessages(merged);
+  const merged = stitchMessages(parts);
+  const messages = normalizeMessages(merged.messages);
+  const note = merged.note;
   if (!messages.length) throw new Error(t('这个会话里没有可导出的对话', 'This session has no exportable messages'));
 
   const first = messages.find((m) => m.role === '用户');

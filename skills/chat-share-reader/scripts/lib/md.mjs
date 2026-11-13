@@ -21,11 +21,15 @@ export function fmtClock(value) {
 }
 
 export function safeName(s) {
-  return (s || 'untitled')
+  // 标题可能整段是标点或空白（第一句只有 "？"），清完就空了，
+  // 这时要回落到默认名，否则会写出一个没有名字的 .md
+  const cleaned = (s || '')
     .replace(/[\\/:*?"<>|]/g, '_')
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, 80);
+    .slice(0, 80)
+    .trim();
+  return cleaned || 'untitled';
 }
 
 // 不可信内容围栏。
