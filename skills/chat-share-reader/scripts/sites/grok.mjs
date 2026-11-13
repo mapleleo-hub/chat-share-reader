@@ -1,7 +1,8 @@
 // Grok 分享页（grok.com/share/<id>）：必须走浏览器。
 // 与 Gemini 同形态：Next.js + RSC，SSR 数据里只有 shareLinkId，正文由客户端二次请求。
-// 更麻烦的是 grok.com 全站挂 Cloudflare 硬挑战，curl 直连返回 403 "Just a moment..."，
-// 后台窗口也过不去，需要前台窗口人工过一次。
+// 2026-11-13 复验：分享页 HTML 已经能 curl 到 200（194 KB，不再挑战），但 RSC payload
+// 里只有 UI 配置和标题，一条消息都没有，所以 DOM 兜底仍然必须走浏览器。同一天
+// `uvx convolvger` 读同一条分享成功（8 条消息），vendor 是首选，细节见 references/sites.md。
 //
 // 选择器已实测（2026-11-07，一条 2 轮分享）：user-message / assistant-message 按 DOM 顺序交错，
 // 一条组合选择器取回即是时间序。下面的候选列表是换版时的退路。

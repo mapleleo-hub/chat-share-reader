@@ -262,6 +262,10 @@ GET https://grok.com/rest/app-chat/share_links/<share_id>
 
 **本机实测这条接口即使页面能打开也返回 403**：浏览器过挑战后页面正常渲染（3087 字符），同一时刻 curl 打接口仍是 `Just a moment`。说明页面通道与接口通道是两套判定，页面能开不代表接口能拿。所以这一站实际走 DOM 渲染，convolvger 的 vendor 通道长期不可用。
 
+2026-11-13 复验补充：Cloudflare 对分享页 HTML 的判定已经变了，`curl -sSL` 直接取 `grok.com/share/<id>` 返回 **200（194 KB）**，不再挑战。但正文依然不在 HTML 里：3 段 `self.__next_f` RSC payload 拼起来 141 KB，里面只有 UI 配置、模型列表和页面标题（`事件 | Shared Grok Conversation`），没有一条消息。也就是说 11-07 的结论（必须走浏览器）不变，但失败原因从「被 Cloudflare 拦」变成了「数据由客户端二次请求」。排障时别再把 200 当成「能直连了」。
+
+同一天复验 `vendor` 通道：本机没有预装 convolvger，走 `uvx convolvger`（uv 临时拉包）读同一条分享**成功**，8 条消息、4 条 warning、带 provider 与快照时间。所以 11-07 那句「vendor 通道长期不可用」已经不成立，convolvger 换掉了对那个 403 接口的依赖。现在 grok 的实际路径是 vendor 优先、DOM 兜底。
+
 渲染后的 DOM 结构（2026-11-07 实测一条 2 轮分享）：
 
 ```
@@ -293,6 +297,21 @@ GET https://grok.com/rest/app-chat/share_links/<share_id>
 - **Qwen**：代码块保留完好，一次 6 条消息的样本里有 22 个围栏。引用写成 `[[3]]`，代码里的 `x = [[3]]` 是嵌套列表不要动。
 - **Perplexity**：见下一节，vendor 的适配已过时，要自己解析。
 - **Grok**：见上一节。
+
+### 2026-11-13 复验（纯 HTTP 通道可行性）
+
+拿三条真实分享链接直接 `curl -sSL`，目的是判断哪些站能脱离浏览器；结论没有变化，但边界清楚了：
+
+| 站点 | HTTP | 响应 | 正文在响应里 | 实际通道 | 结论 |
+| --- | --- | --- | --- | --- | --- |
+| chatgpt.com/share | 200 | 632 KB | 有 | http | 纯 HTTP 可用，实测 2 条消息 |
+| perplexity.ai/session | 403 | 5.8 KB 挑战页 | 无 | browser | 必须浏览器，实测 2 条消息 |
+| grok.com/share | 200 | 194 KB | 无 | vendor | 必须浏览器上下文，实测 vendor 8 条消息 |
+
+ChatGPT 走的是 `backend-api/share/<uuid>` 免认证接口，与 34 行的记录一致，本次未回归。
+
+Perplexity 的 `/session/<uuid>` 与 `/search/<uuid>` 是同一份分享的两种写法：分享原始形态是 `/search/`，页面打开后地址栏跳到 `/session/`，从地址栏复制得到的就是后者。代码两种都匹配，行为一致。403 是 Cloudflare 挑战页，与 `/search/` 同因，不是权限问题，也不是「session 需要登录」。
+
 
 **Convolvger 的退出码语义**：只要抽取过程有 warning（未建模的 tool block、提供商撤销的消息、文件块等），进程返回非零退出码，但内容已经完整产出。判成败必须看 stdout 有没有 `Provider:` 行、输出文件存不存在，不能看 exit code。`lib/vendor.mjs` 已按这个规则处理，改之前先想清楚。
 
