@@ -1,5 +1,7 @@
 # chat-share-reader
 
+[![CI](https://github.com/mapleleo-hub/chat-share-reader/actions/workflows/ci.yml/badge.svg)](https://github.com/mapleleo-hub/chat-share-reader/actions/workflows/ci.yml)
+
 Export, back up, or archive AI chat conversations to markdown.
 
 Two inputs: public share links, and session files already on your disk. It reads the data endpoints behind each share page instead of reconstructing from rendered DOM, so tables, code fences, inline markup, and per-message timestamps come out intact.

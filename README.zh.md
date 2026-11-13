@@ -1,5 +1,7 @@
 # chat-share-reader
 
+[![CI](https://github.com/mapleleo-hub/chat-share-reader/actions/workflows/ci.yml/badge.svg)](https://github.com/mapleleo-hub/chat-share-reader/actions/workflows/ci.yml)
+
 [English](README.md)
 
 把 AI 对话抓成本地 markdown。两种输入：别人发来的公开分享链接，和你自己机器上的会话文件。
