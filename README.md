@@ -18,7 +18,7 @@ Only **Node.js 22+** is required. The rest is optional and only unlocks more sit
 
 | Dependency | Without it |
 | --- | --- |
-| Node 22+ | Nothing runs (uses built-in `WebSocket` and `node:sqlite`) |
+| Node 22.15+ | Nothing runs (uses built-in `WebSocket`, `node:sqlite` and zstd) |
 | Chrome or Edge | Claude, Perplexity, Grok unavailable |
 | Convolvger (Python 3.12+ or uv) | Gemini, DeepSeek, Kimi, Qwen unavailable |
 

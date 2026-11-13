@@ -14,6 +14,13 @@ export function describe() {
   };
 }
 
+// 有没有任何一条浏览器通道可用。
+// 调用方只该问"能不能开浏览器"，不该关心是哪一个后端——早先几处直接 import
+// opencli.mjs，导致装了 Chrome 但没装 opencli 的机器明明能跑却被判成不能用。
+export function available() {
+  return opencliBackend.available() || cdpBackend.available();
+}
+
 export async function createSession(opts = {}) {
   const want = (process.env.CSR_BACKEND || opts.backend || config().backend || 'auto').toLowerCase();
 

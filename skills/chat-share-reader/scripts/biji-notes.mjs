@@ -15,7 +15,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { httpGetJson } from './lib/http.mjs';
-import { available, createSession } from './lib/backend/opencli.mjs';
+import { available, createSession } from './lib/backend/index.mjs';
 import { buildDoc, safeName } from './lib/md.mjs';
 import { stripSeek, transcriptFrom } from './sites/biji.mjs';
 import { t } from './lib/i18n.mjs';
@@ -53,7 +53,7 @@ function parseArgs(argv) {
 async function getToken() {
   if (process.env.BIJI_TOKEN) return process.env.BIJI_TOKEN;
   if (!available()) {
-    throw new Error(t('需要本机 opencli 取登录态，或设置环境变量 BIJI_TOKEN', 'Needs local opencli for the session, or set BIJI_TOKEN'));
+    throw new Error(t('需要浏览器通道取登录态（装 Chrome/Edge 或 opencli），或设置环境变量 BIJI_TOKEN', 'Needs a browser backend for the session (Chrome/Edge or opencli), or set BIJI_TOKEN'));
   }
   const sess = await createSession({ name: 'csr-biji' });
   try {

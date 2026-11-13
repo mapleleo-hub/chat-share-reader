@@ -5,8 +5,11 @@
 // 全部历史，一次几百上千条。两者的接口不是同一个：分享走免认证的 /share/<id>，
 // 这里走登录后才放行的列表与详情接口。
 //
-// 依赖本机 opencli（Chrome 扩展 + daemon），它让你复用浏览器已有的登录态，
-// 不需要导出 cookie，也不需要解密 Chrome 的 cookie 库。
+// 走浏览器通道取登录态，复用浏览器里已有的 session，不需要导出 cookie，
+// 也不需要解密 Chrome 的 cookie 库。两条后端都行：
+// - opencli：直接借用你日常浏览器的登录态，开箱即用
+// - CDP：脚本拉起一个专用 profile 的 Chrome，第一次要在弹出的窗口里手动登录一次，
+//   cookie 落在 ~/.chat-share-reader/chrome-profile，之后不用再登
 //
 // 用法：
 //   node scripts/bulk.mjs sites
@@ -16,7 +19,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { available, createSession } from './lib/backend/opencli.mjs';
+import { available, createSession } from './lib/backend/index.mjs';
 import { buildDoc, safeName } from './lib/md.mjs';
 import { t } from './lib/i18n.mjs';
 
@@ -717,7 +720,7 @@ async function domExport(sess, site, todo, outDir, opts) {
 async function cmdExport(opts) {
   const site = SITES[opts.site];
   if (!site) throw new Error(t(`未知站点：${opts.site}`, `Unknown site: ${opts.site}`));
-  if (!available()) throw new Error(t('没有可用的 opencli，先装 opencli 并确保 Chrome 扩展已连接', 'No usable opencli. Install it and make sure the Chrome extension is connected.'));
+  if (!available()) throw new Error(t('没有可用的浏览器后端：装 Chrome/Edge，或装 opencli 并确保扩展已连接', 'No usable browser backend. Install Chrome/Edge, or install opencli and connect the extension.'));
 
   const sess = await createSession({ name: SESSION });
   const outDir = path.resolve(opts.out);

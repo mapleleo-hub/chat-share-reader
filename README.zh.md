@@ -61,7 +61,7 @@ node skills/chat-share-reader/scripts/sessions.mjs export <id> --json
 
 | 依赖 | 缺了会怎样 |
 | --- | --- |
-| Node 22+ | 跑不了（用到内置 `WebSocket` 和 `node:sqlite`） |
+| Node 22.15+ | 跑不了（用到内置 `WebSocket`、`node:sqlite` 和 zstd） |
 | Chrome 或 Edge | Claude、Perplexity、Grok 三站不可用 |
 | Convolvger（Python 3.12+ 或 uv） | Gemini、DeepSeek、Kimi、Qwen 四站不可用 |
 

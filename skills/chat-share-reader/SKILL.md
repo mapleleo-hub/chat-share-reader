@@ -51,7 +51,7 @@ triggers:
 
 两个入口，解决同一件事的两半：**别人发来的分享链接**，和**你自己机器上的会话记录**。
 
-只需要 Node 22。浏览器和 Python 都是可选的，只有部分站点用得上。
+只需要 Node 22.15 以上（用到内置 `WebSocket`、`node:sqlite` 和 zstd）。浏览器和 Python 都是可选的，只有部分站点用得上。
 
 输出语言跟随系统 locale，也可用 `CSR_LANG=en` 或 `CSR_LANG=zh` 强制。终端提示、导出文件的元信息标题、角色名都跟着变。
 
@@ -95,14 +95,14 @@ node scripts/biji-notes.mjs export --since 2026-11-11 --until 2026-11-12 --out D
 
 | 通道 | 站点 | 依赖 |
 | --- | --- | --- |
-| HTTP（直连接口） | ChatGPT、WorkBuddy、得到大脑（biji.com） | 只要 Node 22+ |
+| HTTP（直连接口） | ChatGPT、WorkBuddy、得到大脑（biji.com） | 只要 Node 22.15+ |
 | Convolvger（第三方 CLI） | Gemini、DeepSeek、Kimi、Qwen | Python 3.12+ 或 uv，`uv tool install convolvger` |
 | 浏览器 | Claude、Perplexity、Grok | Chrome/Edge，或 opencli |
 
 `scripts/lib/backend/` 下有两个浏览器实现，自动选：
 
 - **opencli**：本机装了就用（`OPENCLI_BIN` 或 `~/bin/opencli`），复用已有登录态。
-- **cdp**：没有 opencli 时，用 Node 22 内置 WebSocket 直连 Chrome/Edge 的 DevTools 协议，零 npm 依赖，跨平台。
+- **cdp**：没有 opencli 时，用 Node 内置 WebSocket 直连 Chrome/Edge 的 DevTools 协议，零 npm 依赖，跨平台。
 
 cdp 后端首次访问有 Cloudflare 挑战的站点时会打印提示，等你在弹出的窗口里手动过一次验证，之后 cookie 存在持久 profile 里。
 
@@ -215,7 +215,7 @@ node scripts/sessions.mjs export <路径> --full         # 带上思考与工具
 3. **pi / Oh My Pi**：格式同源，`type: message` 里 `message.role` 为 system 的要跳过，omp 的 `type: title` 直接就是标题。
 4. **Cursor**：SQLite 的 `cursorDiskKV` 表，key 为 `composerData:<uuid>`，正文在 `conversation[].text`（1=用户，2=助手）。
 5. **zcode**：`session` / `message` / `part` 三表，正文取 `part.data.type === "text"`。
-6. **压缩 rollout**：Codex 归档会话是 `archived_sessions/*.jsonl.zst`，且读过之后会被解压搬回 `sessions/`。`lib/local/zst.mjs` 透明解压（Node 22 的 zlib zstd，缺了回退系统 `zstd` 命令），两个目录都扫。直接 grep `.zst` 永远搜不到，别据此判断会话不存在。
+6. **压缩 rollout**：Codex 归档会话是 `archived_sessions/*.jsonl.zst`，且读过之后会被解压搬回 `sessions/`。`lib/local/zst.mjs` 用 Node 内置 zstd 透明解压，不再依赖系统 `zstd` 命令，两个目录都扫。直接 grep `.zst` 永远搜不到，别据此判断会话不存在。
 7. **fork 分片**：同一会话可能有十几个 `rollout-<时间>-<线程>_<分支>.jsonl`，分片名会用新 id，但 `session_meta.session_id` 仍是父线程的。`export` 按它归组、按消息时间排序、按角色加正文前缀去重。
 8. **WorkBuddy**：`~/.workbuddy/projects/<工作区 slug>/<sessionId>.jsonl`，同级 `<sessionId>/tool-results/` 要排除。每条用户消息前挂 `<system-reminder>` 包住的 user_info、identity 文件和自定义指令，必须整块剥掉，否则标题会变成 `<system-reminder`。
 9. **search 只匹配正文**：原文里一条记忆注入带过项目路径，就能让几十个无关会话命中。所以 search 要先 parse 成 messages 再匹配，不能对文件原文 `indexOf`。
