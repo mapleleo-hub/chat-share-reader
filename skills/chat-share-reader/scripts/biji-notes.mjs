@@ -18,6 +18,7 @@ import { httpGetJson } from './lib/http.mjs';
 import { available, createSession } from './lib/backend/opencli.mjs';
 import { buildDoc, safeName } from './lib/md.mjs';
 import { stripSeek, transcriptFrom } from './sites/biji.mjs';
+import { t } from './lib/i18n.mjs';
 
 const API = 'https://get-notes.luojilab.com/voicenotes/web';
 const HOME = 'https://www.biji.com/';
@@ -42,7 +43,7 @@ function parseArgs(argv) {
     else if (a === '--type') opts.type = argv[++i];
     else if (a === '--transcript') opts.transcript = true;
     else if (a === '--force') opts.force = true;
-    else throw new Error('未知参数：' + a);
+    else throw new Error(t('未知参数：', 'Unknown argument: ') + a);
   }
   return { cmd, opts };
 }
@@ -52,7 +53,7 @@ function parseArgs(argv) {
 async function getToken() {
   if (process.env.BIJI_TOKEN) return process.env.BIJI_TOKEN;
   if (!available()) {
-    throw new Error('需要本机 opencli 取登录态，或设置环境变量 BIJI_TOKEN');
+    throw new Error(t('需要本机 opencli 取登录态，或设置环境变量 BIJI_TOKEN', 'Needs local opencli for the session, or set BIJI_TOKEN'));
   }
   const sess = await createSession({ name: 'csr-biji' });
   try {
@@ -66,17 +67,17 @@ async function getToken() {
   } finally {
     await sess.close();
   }
-  throw new Error('页面里没找到 token，先在浏览器打开 ' + HOME + ' 登录一次');
+  throw new Error(t('页面里没找到 token，先在浏览器打开 ' + HOME + ' 登录一次', 'No token found on the page. Open ' + HOME + ' in a browser and sign in once.'));
 }
 
 async function call(url, tk) {
   const body = await httpGetJson(url, { headers: ['Authorization: Bearer ' + tk] });
   if (body && body.h && body.h.c === 0) return body.c;
   if (body && body.message) {
-    throw new Error(`鉴权失败（${body.message}），token 已过期，重新登录 ${HOME} 再跑`);
+    throw new Error(t(`鉴权失败（${body.message}），token 已过期，重新登录 ${HOME} 再跑`, `Auth failed (${body.message}). Token expired; sign in at ${HOME} and rerun.`));
   }
   const h = (body && body.h) || {};
-  throw new Error(`接口返回错误 ${h.c || '?'}：${h.e || '未知'}（${url}）`);
+  throw new Error(t(`接口返回错误 ${h.c || '?'}：${h.e || '未知'}（${url}）`, `API error ${h.c || '?'}: ${h.e || 'unknown'} (${url})`));
 }
 
 // limit 服务端会截断到 20，翻页靠 has_more + next_cursor，不能靠加大 limit。
@@ -122,10 +123,10 @@ async function cmdList(opts) {
   const tk = await getToken();
   const all = await listAll(tk);
   const todo = pick(all, opts);
-  console.log(`账号下录音笔记 ${all.length} 条，命中筛选 ${todo.length} 条`);
+  console.log(t(`账号下录音笔记 ${all.length} 条，命中筛选 ${todo.length} 条`, `${all.length} voice notes on the account, ${todo.length} match the filter`));
   for (const n of todo.slice(0, opts.limit || 50)) {
     const len = String(n.content || '').length;
-    console.log(`${n.created_at}  ${n.note_type || '-'}  ${String(len).padStart(6)} 字  ${n.title || '(无标题)'}`);
+    console.log(`${n.created_at}  ${n.note_type || '-'}  ${String(len).padStart(6)} ${t('字', 'ch')}  ${n.title || t('(无标题)', '(untitled)')}`);
   }
 }
 
@@ -133,14 +134,14 @@ async function cmdExport(opts) {
   const tk = await getToken();
   const all = await listAll(tk);
   const todo = pick(all, opts);
-  if (!todo.length) throw new Error('筛选结果为空，检查 --since / --until / --type');
+  if (!todo.length) throw new Error(t('筛选结果为空，检查 --since / --until / --type', 'Filter matched nothing. Check --since / --until / --type'));
 
   const out = path.resolve(opts.out);
   await mkdir(out, { recursive: true });
   const trDir = path.join(out, 'transcripts');
   if (opts.transcript) await mkdir(trDir, { recursive: true });
 
-  console.log(`账号下录音笔记 ${all.length} 条，导出 ${todo.length} 条 → ${out}`);
+  console.log(t(`账号下录音笔记 ${all.length} 条，导出 ${todo.length} 条 → ${out}`, `${all.length} voice notes, exporting ${todo.length} -> ${out}`));
   let ok = 0;
   let bad = 0;
 
@@ -151,7 +152,7 @@ async function cmdExport(opts) {
       // notes/list 返回的 content 已是完整正文（与 /notes/<id> 逐行比对只差图片的
       // 签名串），所以列表这一趟就能拿到全文，不必再逐条打详情。
       const md = stripSeek(n.content || '');
-      if (!md.trim()) throw new Error('正文为空');
+      if (!md.trim()) throw new Error(t('正文为空', 'Body is empty'));
       const doc = buildDoc({
         title: n.title || '得到大脑笔记',
         url: HOME + 'note/' + (n.note_id || n.id),
@@ -175,10 +176,10 @@ async function cmdExport(opts) {
       }
 
       ok += 1;
-      console.log(`${name}  正文 ${md.length}${tr ? ' / 逐字稿 ' + tr.length : ''}`);
+      console.log(`${name}  ${t('正文', 'body')} ${md.length}${tr ? ' / ' + t('逐字稿', 'transcript') + ' ' + tr.length : ''}`);
     } catch (e) {
       bad += 1;
-      console.log(`${name}  失败：${String(e.message || e)}`);
+      console.log(`${name}  ${t('失败：', 'failed: ')}${String(e.message || e)}`);
     }
     await new Promise((r) => setTimeout(r, 300));
   }
@@ -190,7 +191,7 @@ const { cmd, opts } = parseArgs(process.argv.slice(2));
 if (cmd === 'list') await cmdList(opts);
 else if (cmd === 'export') await cmdExport(opts);
 else {
-  console.log('用法：');
+  console.log(t('用法：', 'Usage:'));
   console.log('  node scripts/biji-notes.mjs list [--limit 20] [--since 2026-11-01] [--type class_audio]');
   console.log('  node scripts/biji-notes.mjs export --since 2026-11-11 --until 2026-11-12 [--out DIR] [--transcript]');
   process.exitCode = cmd === 'help' ? 0 : 2;

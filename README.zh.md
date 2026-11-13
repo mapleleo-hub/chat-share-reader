@@ -107,6 +107,25 @@ cursor      Cursor       可用      %APPDATA%/Cursor/User/globalStorage/state.v
 
 正文里的标题会自动降两级，保证「角色」这一层的层级不被淹没。
 
+## 批量导出（自己账号下的历史）
+
+分享链接处理的是别人发来的对话。自己账号下的全部记录有两套脚本。
+
+```bash
+# 已登录站点上的全部会话（依赖 opencli）
+node scripts/bulk.mjs sites
+node scripts/bulk.mjs list   --site deepseek --limit 20
+node scripts/bulk.mjs export --site deepseek --out DIR --since 2026-09-01
+
+# 得到大脑的录音笔记（课堂、会议），可选带逐字稿
+node scripts/biji-notes.mjs list   --since 2026-11-01 --type class_audio
+node scripts/biji-notes.mjs export --since 2026-11-11 --until 2026-11-12 --out DIR --transcript
+```
+
+`bulk.mjs` 通过 opencli 复用浏览器登录态，不需要另外管 token。站点接口改版时用 `probe` 重新校准。
+
+`biji-notes.mjs` 需要 `BIJI_TOKEN` 或已登录的 opencli 会话，会自动翻页取全账号列表，可以逐条附上逐字稿。
+
 ## 已知限制
 
 - 只对公开分享有效，私有分享拿不到。

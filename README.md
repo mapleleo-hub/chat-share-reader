@@ -74,6 +74,25 @@ node skills/chat-share-reader/scripts/read.mjs <url> [more urls...] [--out DIR] 
 
 Default output goes to `./chat-shares/<title>.md`. `--stdout` prints, `--json` returns structured results, `--no-vendor` skips Convolvger for debugging.
 
+## Bulk export (your own account)
+
+Share links cover conversations someone sent you. Two scripts cover your own history.
+
+```bash
+# Every conversation on a site you are signed in to (needs opencli)
+node skills/chat-share-reader/scripts/bulk.mjs sites
+node skills/chat-share-reader/scripts/bulk.mjs list   --site deepseek --limit 20
+node skills/chat-share-reader/scripts/bulk.mjs export --site deepseek --out DIR --since 2026-09-01
+
+# Biji voice notes (class and meeting recordings), transcripts optional
+node skills/chat-share-reader/scripts/biji-notes.mjs list   --since 2026-11-01 --type class_audio
+node skills/chat-share-reader/scripts/biji-notes.mjs export --since 2026-11-11 --until 2026-11-12 --out DIR --transcript
+```
+
+`bulk.mjs` reuses the signed-in browser session through opencli, so there is no token juggling. `probe` re-calibrates a site's endpoints when the site changes.
+
+`biji-notes.mjs` needs `BIJI_TOKEN` or a signed-in opencli session. It pages through the account list and can attach the per-note transcript.
+
 ## Known limits
 
 - Public shares only. Private links are out of reach.

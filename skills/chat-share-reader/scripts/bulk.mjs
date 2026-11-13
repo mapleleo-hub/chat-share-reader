@@ -18,6 +18,7 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { available, createSession } from './lib/backend/opencli.mjs';
 import { buildDoc, safeName } from './lib/md.mjs';
+import { t } from './lib/i18n.mjs';
 
 const SESSION = 'csr-bulk';
 // 页面里的 fetch 和 XHR 都可能被站点自己的脚本改写：Qwen 的阿里埋点包了 fetch，WAF 又
@@ -335,19 +336,26 @@ const SITES = {
     // 坑：后台标签会被浏览器节流，Angular 不渲染，必须前台窗口打开并且等十几秒。
     domMode: true,
     foreground: true,
-    domDelay: 8000,
+    reuseTab: true,
+    domDelay: 2500,
     detailUrl: (id) => `https://gemini.google.com/app/${id}`,
     listScript: `(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
       const cnt = () => document.querySelectorAll('a[href*="/app/"]').length;
+      // Angular 首屏慢，侧边栏还没出链接就开始滚，会在 0 条时判定「稳定」并提前收工。
+      for (let i = 0; i < 25; i++) {
+        if (cnt() > 0) break;
+        await wait(1000);
+      }
+      const rounds = window.__max > 0 ? 2 : 120;
       let stable = 0;
-      const rounds = window.__max > 0 ? 2 : 60;
       for (let i = 0; i < rounds; i++) {
         const b = cnt();
         const sc = document.querySelector("infinite-scroller") || document.querySelector("conversations-list");
         if (sc) sc.scrollTop = sc.scrollHeight;
         else window.scrollTo(0, document.body.scrollHeight);
-        await new Promise((r) => setTimeout(r, 900));
-        if (cnt() === b) { stable += 1; if (stable >= 2) break; } else stable = 0;
+        await wait(1500);
+        if (cnt() === b) { stable += 1; if (stable >= 5) break; } else stable = 0;
       }
       const NL = String.fromCharCode(10);
       const seen = new Map();
@@ -362,14 +370,20 @@ const SITES = {
     extractScript: `(async () => {
       const NL = String.fromCharCode(10);
       const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-      for (let i = 0; i < 12; i++) {
-        if (document.querySelector("user-query") || document.querySelector("model-response")) break;
+      const ready = () => {
+        const mr = document.querySelector("model-response");
+        const uq = document.querySelector("user-query");
+        return !!(uq && mr && String(mr.innerText || "").trim().length > 40);
+      };
+      for (let i = 0; i < 25; i++) {
+        if (ready()) break;
         await wait(1000);
       }
-      // 虚拟滚动：只渲染视口附近。往上滚把更早的回合载进来，直到条数不再增长。
+      // 虚拟滚动：只渲染视口附近。单轮会话不值得滚（省 20 秒），多轮才往上翻。
       const box = document.querySelector("chat-window") || document.querySelector("infinite-scroller");
       let last = -1;
-      for (let i = 0; i < 30; i++) {
+      const rounds = document.querySelectorAll("user-query, model-response").length > 3 ? 30 : 0;
+      for (let i = 0; i < rounds; i++) {
         const n = document.querySelectorAll("user-query, model-response").length;
         if (n === last) break;
         last = n;
@@ -610,9 +624,9 @@ async function fetchList(sess, site, maxWanted) {
   await sess.eval('window.__err = ""; window.__list = ""; window.__max = ' + Number(maxWanted || 0));
   await sess.eval(site.listScript);
   const err = cleanJson(await sess.eval('window.__err || ""'));
-  if (err) throw new Error(`列表接口报错：${typeof err === 'string' ? err : JSON.stringify(err).slice(0, 300)}`);
+  if (err) throw new Error(t('列表接口报错：', 'list API error: ') + ` ${typeof err === 'string' ? err : JSON.stringify(err).slice(0, 300)}`);
   const list = await waitVar(sess, '__list');
-  if (!list) throw new Error('列表超时未返回，可能是登录态失效或接口改版');
+  if (!list) throw new Error(t('列表超时未返回，可能是登录态失效或接口改版', 'List request timed out. Session may have expired, or the endpoint changed.'));
   return list;
 }
 
@@ -635,8 +649,22 @@ async function domExport(sess, site, todo, outDir, opts) {
   for (let i = 0; i < todo.length; i++) {
     const it = todo[i];
     try {
-      await sess.open(site.detailUrl(it.id), { window: site.foreground ? 'foreground' : 'background' });
-      await sleep(opts.domDelay || 3000);
+      const target = site.detailUrl(it.id);
+      if (site.reuseTab) {
+        // 整页重载要几十秒（Gemini 冷启动尤其慢）。侧边栏已经有这条会话时点它走 SPA 路由，
+        // 只换数据不重载；点不到再退回 location 跳转。
+        const id = String(it.id);
+        await sess.eval(
+          '(function(){var id=' + JSON.stringify(id) + ';' +
+          'var a=Array.prototype.slice.call(document.querySelectorAll(\'a[href*="/app/"]\'))' +
+          '.filter(function(x){return (x.getAttribute("href")||"").indexOf(id)>=0})[0];' +
+          'if(a){a.click();return "spa"}location.href=' + JSON.stringify(target) + ';return "nav"})()'
+        );
+        await sleep(opts.domDelay || 2500);
+      } else {
+        await sess.open(target, { window: site.foreground ? 'foreground' : 'background' });
+        await sleep(opts.domDelay || 3000);
+      }
       let data = cleanJson(await sess.eval(domToMd + String.fromCharCode(10) + site.extractScript));
       if (!data || !data.messages) {
         await sleep(2500);
@@ -645,7 +673,7 @@ async function domExport(sess, site, todo, outDir, opts) {
       const messages = (data && data.messages || []).filter((m) => m && m.body && String(m.body).trim());
       if (!messages.length) {
         failed.push({ id: it.id, error: (data && data.error) || '无消息' });
-        console.log(`[${i + 1}/${todo.length}] 空 ${it.id}`);
+        console.log(`[${i + 1}/${todo.length}] ${t('空', 'empty')} ${it.id}`);
         continue;
       }
       const day = isoTime(it.updatedAt) || isoTime(messages[0].time) || '0000-00-00';
@@ -669,10 +697,10 @@ async function domExport(sess, site, todo, outDir, opts) {
         chars: messages.reduce((n, m) => n + String(m.body).length, 0),
         file,
       });
-      console.log(`[${i + 1}/${todo.length}] ${messages.length} 条 ${title.slice(0, 24)}`);
+      console.log(`[${i + 1}/${todo.length}] ${messages.length} ${t('条', 'msgs')} ${title.slice(0, 24)}`);
     } catch (e) {
       failed.push({ id: it.id, error: String(e.message || e) });
-      console.log(`[${i + 1}/${todo.length}] 失败 ${it.id}`);
+      console.log(`[${i + 1}/${todo.length}] ${t('失败', 'failed')} ${it.id}`);
     }
     await sleep(opts.delay || 500);
   }
@@ -682,31 +710,47 @@ async function domExport(sess, site, todo, outDir, opts) {
   if (failed.length) {
     await writeFile(path.join(outDir, `bulk-${opts.site}-failed.json`), JSON.stringify(failed, null, 1), 'utf8');
   }
-  console.log(`\n完成：成功 ${records.length}，失败 ${failed.length}`);
-  console.log(`索引 ${indexFile}`);
+  console.log(t(`\n完成：成功 ${records.length}，失败 ${failed.length}`, `\nDone: ${records.length} ok, ${failed.length} failed`));
+  console.log(t(`索引 ${indexFile}`, `Index: ${indexFile}`));
 }
 
 async function cmdExport(opts) {
   const site = SITES[opts.site];
-  if (!site) throw new Error(`未知站点：${opts.site}`);
-  if (!available()) throw new Error('没有可用的 opencli，先装 opencli 并确保 Chrome 扩展已连接');
+  if (!site) throw new Error(t(`未知站点：${opts.site}`, `Unknown site: ${opts.site}`));
+  if (!available()) throw new Error(t('没有可用的 opencli，先装 opencli 并确保 Chrome 扩展已连接', 'No usable opencli. Install it and make sure the Chrome extension is connected.'));
 
   const sess = await createSession({ name: SESSION });
   const outDir = path.resolve(opts.out);
 
   const where = await openSite(sess, site);
   if (/sign_in|login|signin/i.test(where)) {
-    throw new Error(`还没登录 ${site.label}，当前停在 ${where}。先在浏览器里登录一次再跑。`);
+    throw new Error(t(`还没登录 ${site.label}，当前停在 ${where}。先在浏览器里登录一次再跑。`, `Not signed in to ${site.label}; stopped at ${where}. Sign in once in the browser and rerun.`));
   }
 
-  const list = await fetchList(sess, site, opts.limit);
-  console.log(`${site.label} 账号下共 ${list.length} 个会话`);
+  const cacheFile = path.join(outDir, `bulk-${opts.site}-list.json`);
+  let list = null;
+  if (opts.reuseList) {
+    try {
+      const cached = JSON.parse(await readFile(cacheFile, 'utf8'));
+      if (Array.isArray(cached) && cached.length) {
+        list = cached;
+        console.log(t(`复用列表缓存 ${list.length} 个`, `Reusing cached list: ${list.length}`));
+      }
+    } catch {}
+  }
+  if (!list) {
+    list = await fetchList(sess, site, opts.limit);
+    if (!opts.limit && list.length > 3) {
+      await writeFile(cacheFile, JSON.stringify(list, null, 1), 'utf8');
+    }
+  }
+  console.log(t(`${site.label} 账号下共 ${list.length} 个会话`, `${list.length} sessions on the ${site.label} account`));
 
   let todo = list;
   if (opts.since) todo = todo.filter((x) => isoTime(x.updatedAt) >= opts.since);
   if (opts.limit) todo = todo.slice(0, opts.limit);
   todo.sort((a, b) => String(isoTime(b.updatedAt)).localeCompare(String(isoTime(a.updatedAt))));
-  console.log(`本次导出 ${todo.length} 个${opts.since ? `（${opts.since} 之后）` : ''}`);
+  console.log(t(`本次导出 ${todo.length} 个${opts.since ? `（${opts.since} 之后）` : ''}`, `Exporting ${todo.length}${opts.since ? ` (after ${opts.since})` : ''}`));
 
   if (site.domMode) return domExport(sess, site, todo, outDir, opts);
 
@@ -743,7 +787,7 @@ async function cmdExport(opts) {
       });
     }
     const done = Math.min(i + size, todo.length);
-    console.log(`[${done}/${todo.length}] 本批 ${got.length} 条`);
+    console.log(`[${done}/${todo.length}] ${t('本批', 'batch')} ${got.length}`);
     await sleep(opts.delay || 400);
   }
 
@@ -752,9 +796,9 @@ async function cmdExport(opts) {
   if (failed.length) {
     await writeFile(path.join(outDir, `bulk-${opts.site}-failed.json`), JSON.stringify(failed, null, 1), 'utf8');
   }
-  console.log(`\n完成：成功 ${records.length}，失败 ${failed.length}`);
-  console.log(`正文 ${records.reduce((n, r) => n + r.chars, 0).toLocaleString()} 字符`);
-  console.log(`索引 ${indexFile}`);
+  console.log(t(`\n完成：成功 ${records.length}，失败 ${failed.length}`, `\nDone: ${records.length} ok, ${failed.length} failed`));
+  console.log(t(`正文 ${records.reduce((n, r) => n + r.chars, 0).toLocaleString()} 字符`, `${records.reduce((n, r) => n + r.chars, 0).toLocaleString()} characters`));
+  console.log(t(`索引 ${indexFile}`, `Index: ${indexFile}`));
 }
 
 
@@ -762,40 +806,59 @@ async function cmdExport(opts) {
 // 接口路径、字段名都能从这里读到，不用猜。
 async function cmdProbe(opts) {
   const site = SITES[opts.site];
-  if (!site) throw new Error(`未知站点：${opts.site}`);
+  if (!site) throw new Error(t(`未知站点：${opts.site}`, `Unknown site: ${opts.site}`));
   const sess = await createSession({ name: SESSION });
   await openSite(sess, site);
   const apis = cleanJson(await sess.eval('JSON.stringify(window.__apis())')) || [];
   const uniq = [...new Set(apis)].filter((u) => !/configs|models|tts|users\/status|refresh/.test(u));
-  console.log(`${site.label} 页面发起过的业务接口 ${uniq.length} 个`);
+  console.log(t(`${site.label} 页面发起过的业务接口 ${uniq.length} 个`, `${uniq.length} business endpoints seen on ${site.label}`));
   for (const u of uniq.slice(0, opts.limit || 8)) {
     await sess.eval(`window.__p = ""`);
     await sess.eval(`window.__req(${JSON.stringify(u)}, { timeout: 12000 }).then(function (r) { window.__p = JSON.stringify({ status: r.status, via: r.via, head: String(r.text || "").slice(0, 400) }); })`);
     const out = await waitVar(sess, '__p', { tries: 15, delay: 1000 });
     console.log(`\n${u}`);
-    console.log(out ? `  ${out.status} via ${out.via}  ${String(out.head).replace(/\s+/g, ' ').slice(0, 300)}` : '  无响应');
+    console.log(out ? `  ${out.status} via ${out.via}  ${String(out.head).replace(/\s+/g, ' ').slice(0, 300)}` : t('  无响应', '  no response'));
   }
 }
 
 async function cmdList(opts) {
   const site = SITES[opts.site];
-  if (!site) throw new Error(`未知站点：${opts.site}`);
+  if (!site) throw new Error(t(`未知站点：${opts.site}`, `Unknown site: ${opts.site}`));
   const sess = await createSession({ name: SESSION });
   const where = await openSite(sess, site);
   if (/sign_in|login|signin/i.test(where)) {
-    console.log(`未登录，当前停在 ${where}`);
+    console.log(t(`未登录，当前停在 ${where}`, `Not signed in; stopped at ${where}`));
     return;
   }
-  const list = await fetchList(sess, site, opts.limit);
-  console.log(`${site.label} 共 ${list.length} 个会话`);
+  const cacheFile = path.resolve(opts.out, `bulk-${opts.site}-list.json`);
+  let list = null;
+  if (opts.reuseList) {
+    try {
+      const cached = JSON.parse(await readFile(cacheFile, 'utf8'));
+      if (Array.isArray(cached) && cached.length) {
+        list = cached;
+        console.log(t(`复用列表缓存 ${list.length} 个`, `Reusing cached list: ${list.length}`));
+      }
+    } catch {}
+  }
+  if (!list) {
+    list = await fetchList(sess, site, opts.limit);
+    if (!opts.limit && list.length > 3) {
+      try {
+        await mkdir(path.resolve(opts.out), { recursive: true });
+        await writeFile(cacheFile, JSON.stringify(list, null, 1), 'utf8');
+      } catch {}
+    }
+  }
+  console.log(t(`${site.label} 共 ${list.length} 个会话，缓存 ${cacheFile}`, `${list.length} sessions on ${site.label}; cache at ${cacheFile}`));
   for (const x of list.slice(0, opts.limit || 20)) {
-    console.log(`${isoTime(x.updatedAt) || '----'}  ${String(x.id).slice(0, 14)}  ${x.title || '(无标题)'}`);
+    console.log(`${isoTime(x.updatedAt) || '----'}  ${String(x.id).slice(0, 14)}  ${x.title || t('(无标题)', '(untitled)')}`);
   }
 }
 
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
-  const opts = { site: 'deepseek', out: './bulk-out', limit: 0, since: '', batch: 15, delay: 400 };
+  const opts = { site: 'deepseek', out: './bulk-out', limit: 0, since: '', batch: 15, delay: 400, reuseList: false };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === '--site') opts.site = rest[++i];
@@ -804,6 +867,7 @@ async function main() {
     else if (a === '--since') opts.since = rest[++i];
     else if (a === '--batch') opts.batch = Number(rest[++i]);
     else if (a === '--delay') opts.delay = Number(rest[++i]);
+    else if (a === '--reuse-list') opts.reuseList = true;
   }
 
   if (cmd === 'sites') {
@@ -813,9 +877,9 @@ async function main() {
   if (cmd === 'probe') return cmdProbe(opts);
   if (cmd === 'list') return cmdList(opts);
   if (cmd === 'export') return cmdExport(opts);
-  console.log(`用法：
+  console.log(t('用法：', 'Usage: ') + `
   node scripts/bulk.mjs sites
-  node scripts/bulk.mjs probe  --site deepseek      # 登录后先校准接口
+  node scripts/bulk.mjs probe  --site deepseek      # ${t('登录后先校准接口', 'calibrate endpoints after signing in')}
   node scripts/bulk.mjs list   --site deepseek [--limit 20]
   node scripts/bulk.mjs export --site deepseek --out DIR [--since 2026-09-01] [--limit N] [--batch 15]`);
 }

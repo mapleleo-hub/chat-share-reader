@@ -10,6 +10,7 @@
 //
 // 三个接口都不需要 cookie、不需要 Referer、不校验 UA，桌面 UA 直接 200。
 import { httpGetJson } from '../lib/http.mjs';
+import { t } from '../lib/i18n.mjs';
 
 const API = 'https://get-notes.luojilab.com/voicenotes/web/share/notes/';
 
@@ -19,7 +20,7 @@ export const match = (url) => /biji\.com\/note\/share_note\//.test(url);
 
 function shareId(url) {
   const m = url.match(/share_note\/([A-Za-z0-9_-]+)/);
-  if (!m) throw new Error('链接里没有 share_note id：' + url);
+  if (!m) throw new Error(t('链接里没有 share_note id：', 'No share_note id in link: ') + url);
   return m[1];
 }
 
@@ -71,10 +72,10 @@ export async function read(url) {
 
   // h.c 为 0 才是成功；非 0 时 h.e 带原因（分享被取消、笔记已删除等）
   if (body && body.h && body.h.c) {
-    throw new Error(`接口返回错误 ${body.h.c}：${body.h.e || '分享可能已失效'}`);
+    throw new Error(t(`接口返回错误 ${body.h.c}：${body.h.e || '分享可能已失效'}`, `API error ${body.h.c}: ${body.h.e || 'share may have expired'}`));
   }
   const note = body && body.c && body.c.note;
-  if (!note) throw new Error('接口没返回 note，可能不是公开分享或笔记已删除');
+  if (!note) throw new Error(t('接口没返回 note，可能不是公开分享或笔记已删除', 'No note in response. It may be private or deleted.'));
 
   const messages = [];
   const md = stripSeek(note.content || note.body_text || '');
@@ -88,7 +89,7 @@ export async function read(url) {
   }
   if (transcript) messages.push({ role: '逐字稿', body: transcript });
 
-  if (!messages.length) throw new Error('笔记正文为空');
+  if (!messages.length) throw new Error(t('笔记正文为空', 'Note body is empty'));
 
   return {
     title: note.title || '得到大脑笔记',
