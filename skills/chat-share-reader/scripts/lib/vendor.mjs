@@ -4,7 +4,7 @@
 // 探测顺序（任选其一即可）：
 //   1. CONVOLVGER_BIN 环境变量指向可执行文件
 //   2. PATH 里的 convolvger
-//   3. uvx（装了 uv 就有），临时运行 `uvx convolvger`，无需预装
+//   3. uvx（装了 uv 就有），临时运行钉版本的那份，无需预装
 //   4. ~/.chat-share-reader/config.json 里的 convolvgerBin
 //
 // 分工：能交给它的一律交给它，只保留它做不到或实测失效的站点自己实现。
@@ -21,6 +21,10 @@ import { which } from './which.mjs';
 
 const exec = promisify(execFile);
 
+// uvx 兜底必须钉版本。不钉的话每次解析到当时最新的发布，装进来跑的代码和审过的不是同一份，
+// 对使用者是供应链风险，对扫描器是「未固定的外部依赖」。要换版本设 CSR_CONVOLVGER_SPEC。
+const UVX_SPEC = process.env.CSR_CONVOLVGER_SPEC || 'convolvger==0.7.0';
+
 let cached = null;
 
 function resolve() {
@@ -33,7 +37,7 @@ function resolve() {
   if (onPath) return (cached = { bin: onPath, pre: [] });
 
   const uvx = which('uvx');
-  if (uvx) return (cached = { bin: uvx, pre: ['convolvger'] });
+  if (uvx) return (cached = { bin: uvx, pre: ['--from', UVX_SPEC, 'convolvger'] });
 
   const fromConfig = norm(config().convolvgerBin);
   if (fromConfig && existsSync(fromConfig)) return (cached = { bin: fromConfig, pre: [] });
@@ -51,7 +55,7 @@ const CONVOLVGER_HINT =
   'Convolvger 不可用。装法任选其一：\n' +
   '  uv tool install convolvger       （推荐，需 Python 3.12+）\n' +
   '  pip install convolvger\n' +
-  '  brew install uv && uvx convolvger（不预装，临时运行）\n' +
+  '  brew install uv && uvx --from convolvger==0.7.0 convolvger（不预装，临时运行）\n' +
   '  或设置 CONVOLVGER_BIN 指向可执行文件';
 
 // Convolvger 原生支持的站点。claude / perplexity 要人工交接或自写解析，不列入自动路径。

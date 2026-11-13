@@ -16,9 +16,13 @@ Use it when:
 
 ```bash
 npx skills add mapleleo-hub/chat-share-reader
+# or, from the ClawHub registry
+npx clawhub install chat-share-reader
 ```
 
 Install links it into Claude Code, Codex, Cursor, Gemini CLI, Cline, opencode and 12 more agents.
+
+No uploads, no telemetry: every byte it fetches is written to a local file. `SKILL.md` states what it reads and what it never does, in a form you can check against the code.
 
 ## Requirements
 
@@ -49,7 +53,7 @@ Works with Node alone: ChatGPT, WorkBuddy and Biji (得到大脑) share links, p
 
 Biji is a voice-note site rather than a chat site. An export carries two parts: the organized note and a timestamped transcript. Only the public share API works. Rendering the page gives less, because the desktop viewport is blank and the body lazy-loads.
 
-Two browser backends, picked automatically: [opencli](https://github.com/jackwener/opencli) if installed, otherwise a built-in DevTools Protocol client using Node 22's `WebSocket` with zero npm dependencies.
+Two browser backends, picked automatically: [opencli](https://github.com/jackwener/opencli) if installed, otherwise a built-in DevTools Protocol client using Node 22's `WebSocket` with zero npm dependencies. The DevTools channel keeps its own profile directory and its own debug port, and only reuses a browser it launched itself, so it never borrows a debugging session owned by something else. Convolvger is pinned to one version (`convolvger==0.7.0` through `uvx --from`), so the code that runs is the code that was reviewed.
 
 ## Local sessions: 15 sources
 
@@ -85,9 +89,11 @@ Exports are redacted by default. Home directories become `~`, other users' on th
 
 ```bash
 --redact off      # raw text
---redact home     # default
---redact strict   # also masks emails, tokens (sk-, ghp_, JWT, Bearer), private IPs
+--redact home     # default: home paths and secrets
+--redact strict   # also masks emails and private IPs
 ```
+
+API keys, JWTs, bearer tokens and cloud credentials are masked at every level except `off`. That one used to depend on the level too; a key has no reason to survive an export that will be forwarded, so it no longer does.
 
 Public IPs and commit hashes are left alone: those usually carry meaning. Redaction lives in `lib/redact.mjs` and applies to every export path, including the third-party Convolvger channel. It is idempotent, so re-running on an already redacted file changes nothing.
 

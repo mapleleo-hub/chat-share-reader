@@ -6,8 +6,8 @@
 //
 // 三档，默认 home：
 //   off    不处理
-//   home   只把家目录和同机其他用户的家目录换成 ~ / ~user，保留目录结构
-//   strict 在 home 之上再遮邮箱、令牌、内网 IP
+//   home   家目录和同机其他用户的家目录换成 ~ / ~user，保留目录结构；令牌一律遮
+//   strict 在 home 之上再遮邮箱、内网 IP
 //
 // 只做文本替换，不改 markdown 结构。替换是幂等的：脱敏后的文本再跑一次不会二次变化
 // （替换成 ~ 之后不再匹配原始家目录路径），所以重复处理同一份文件是安全的。
@@ -103,9 +103,12 @@ export function createRedactor(level = 'home') {
       });
     }
 
+    // 令牌在所有档位都遮（off 除外）。这类串没有「导出后还要保留」的合法用途，
+    // 而一旦是真凭据漏进一个会被转发的文件，代价不对称。home 档以前不遮，是漏网。
+    for (const re of SECRET_RULES) s = sub(re, s, '[redacted]');
+
     if (lv === 'strict') {
       s = sub(EMAIL, s, (m, first, rest, domain) => `${first}***@${domain}`);
-      for (const re of SECRET_RULES) s = sub(re, s, '[redacted]');
       s = sub(PRIVATE_IP, s, (m) => m.split('.').slice(0, 2).join('.') + '.x.x');
     }
 

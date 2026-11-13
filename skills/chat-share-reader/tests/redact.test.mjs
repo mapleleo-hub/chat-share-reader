@@ -60,9 +60,19 @@ test('strict 档不动公网 IP 与 commit hash', () => {
   assert.equal(redact(s, 'strict'), s);
 });
 
-test('home 档不碰邮箱令牌，只有 strict 才遮', () => {
+test('home 档遮令牌但不碰邮箱', () => {
   const s = 'alice@example.com sk-abcdefghijklmnopqrst';
-  assert.equal(redact(s, 'home'), s);
+  const out = redact(s, 'home');
+  assert.ok(out.includes('alice@example.com'), '邮箱留给 strict');
+  assert.ok(out.includes('[redacted]'), '令牌在 home 档就该遮');
+  assert.equal(out, 'alice@example.com [redacted]');
+});
+
+test('令牌遮蔽不受档位影响，只有 off 放行', () => {
+  const s = 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123 AKIAABCDEFGHIJKLMNOP';
+  assert.equal(redact(s, 'off'), s);
+  assert.equal(redact(s, 'home'), '[redacted] [redacted]');
+  assert.equal(redact(s, 'strict'), '[redacted] [redacted]');
 });
 
 test('未知档位回落 home', () => {

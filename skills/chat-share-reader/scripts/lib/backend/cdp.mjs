@@ -7,7 +7,7 @@
 // cookie 存进持久 profile，之后就不用再管。
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -86,11 +86,45 @@ function probePort(port, timeoutMs = 600) {
   });
 }
 
+// 记住「上一次是我们自己在哪个端口、哪个 profile 起的 Chrome」。
+// 只有一个用途：下次复用自己的那个实例，而不是复用别人开着的调试端口。
+function markerPath() {
+  return path.join(os.homedir(), '.chat-share-reader', 'browser.json');
+}
+
+async function readMarker() {
+  try {
+    const j = JSON.parse(await readFile(markerPath(), 'utf8'));
+    return j && typeof j.port === 'number' ? j : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeMarker(port, profile) {
+  try {
+    await mkdir(path.dirname(markerPath()), { recursive: true });
+    await writeFile(markerPath(), JSON.stringify({ port, profile, at: Date.now() }), 'utf8');
+  } catch {
+    /* 记不住只是下次多起一个浏览器，不影响功能 */
+  }
+}
+
+// 端口上那个 Chrome 算不算「我们自己的」。抽成纯函数，好单测，也避免以后有人
+// 图省事改回「只要端口上有 Chrome 就复用」。
+export function isOurChrome({ state, port, profile, mark }) {
+  return state === 'chrome' && !!mark && mark.port === port && mark.profile === profile;
+}
+
 // 从起始端口往后找一个能用的。被别的程序占住时不硬撞，直接换下一个
-async function pickPort(start, span = 20) {
+async function pickPort(start, profile, span = 20) {
+  const mark = await readMarker();
   for (let p = start; p < start + span; p++) {
     const state = await probePort(p);
-    if (state === 'chrome') return { port: p, reuse: true };
+    // 端点上是 Chrome，但只有「我们上次用同一个 profile 起的」才认。
+    // 别人的调试端口一律不碰：连上去等于借用别人的会话和 cookie。
+    if (isOurChrome({ state, port: p, profile, mark })) return { port: p, reuse: true };
+    if (state === 'chrome') continue;
     if (state === 'free') return { port: p, reuse: false };
     // busy：换个端口继续
   }
@@ -135,6 +169,7 @@ async function launchChrome({ port, profile }) {
   ];
   const proc = spawn(bin, args, { stdio: 'ignore' });
   proc.unref();
+  await writeMarker(port, profile);
   return proc;
 }
 
@@ -189,13 +224,13 @@ export async function createSession({ port, profile, name = 'csr' } = {}) {
 
   // 端口可能被别的程序占着（比如另一个 Chrome 实例、别的调试工具），
   // 直接沿用会卡在「端口没起来」这种含糊报错上。先探一遍再决定
-  const picked = await pickPort(port || defaultPort());
+  const picked = await pickPort(port || defaultPort(), prof);
   const usePort = picked.port;
   if (!picked.reuse) {
     await launchChrome({ port: usePort, profile: prof });
     await waitForPort(usePort);
   } else if (usePort !== (port || defaultPort())) {
-    console.error(`Port ${port || defaultPort()} is busy, using ${usePort} instead.`);
+    console.error(`Port ${port || defaultPort()} is not ours to reuse, starting a browser on ${usePort} instead.`);
   }
 
   let tabId = null;

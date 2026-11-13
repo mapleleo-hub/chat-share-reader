@@ -1,18 +1,30 @@
 ---
 name: chat-share-reader
-description: "Export, back up, or archive AI chat conversations to markdown. Two inputs: public share links (ChatGPT, Claude, Gemini, Grok, Perplexity, DeepSeek, Kimi, Qwen, WorkBuddy, biji.com) and 15 local agent session stores (Claude Code, Codex, Cursor, opencode, Cline, Gemini CLI and more). Use when the user asks to save a shared conversation, export the chat they are in now (no args), search past sessions, filter by directory, batch export a site, read a compressed .jsonl.zst archive, or feed a session into another agent. Redacts home paths, emails and tokens by default. Also exports biji.com voice notes with transcripts. 导出、备份、归档 AI 对话为 markdown，支持他人分享的链接与本机 15 种 agent 会话记录；不传参数即导出当前会话，可搜索历史、按工作目录筛选、批量导出、读压缩归档、把上下文喂给另一个 agent；默认脱敏家目录、邮箱与令牌；另可导出得到笔记的录音与逐字稿。"
+description: "Export, backup, or archive AI chat conversations to markdown. Two inputs: public share links (ChatGPT, Claude, Gemini, Grok, Perplexity, DeepSeek, Kimi, Qwen, WorkBuddy, biji.com) and 15 local agent session stores (Claude Code, Codex, Cursor, opencode, Cline, Gemini CLI and more). Use when the user asks to save a shared conversation, export the chat they are in now (no args), search past sessions, filter by directory, batch export a site, read a compressed .jsonl.zst archive, or feed a session into another agent. Bulk mode exports your own accounts' history through the browser session you are already signed in to. Tokens are always masked, home paths by default, emails with --redact strict. Also exports biji.com voice notes and transcripts. 导出、备份、归档 AI 对话为 markdown，支持分享链接与本机 15 种 agent 会话记录；不传参数导当前会话，可搜索、筛选、批量导出、读压缩归档、喂给另一个 agent；令牌一律遮，家目录默认遮；另可导出得到笔记录音与逐字稿。"
 license: MIT
 metadata:
   openclaw:
     requires:
       bins: ["node"]
     optional:
-      bins: ["google-chrome", "convolvger"]
+      bins: ["google-chrome", "convolvger", "opencli"]
+    envVars:
+      - name: BIJI_TOKEN
+        required: false
+        description: Biji (biji.com) account token, read only by biji-notes.mjs. Without it that script uses an already signed-in browser session.
+      - name: CSR_CONVOLVGER_SPEC
+        required: false
+        description: Overrides the pinned Convolvger version used through uvx. Default convolvger==0.7.0.
+      - name: CSR_PROFILE
+        required: false
+        description: Directory of the dedicated browser profile launched for the Convolvger and DevTools channels.
+    emoji: "💬"
+    homepage: https://github.com/mapleleo-hub/chat-share-reader
   clawdbot:
     requires:
       bins: ["node"]
     optional:
-      bins: ["google-chrome", "convolvger"]
+      bins: ["google-chrome", "convolvger", "opencli"]
 triggers:
 - 抓 AI 聊天记录
 - 保存分享链接
@@ -52,6 +64,32 @@ triggers:
 两个入口，解决同一件事的两半：**别人发来的分享链接**，和**你自己机器上的会话记录**。
 
 只需要 Node 22.15 以上（用到内置 `WebSocket`、`node:sqlite` 和 zstd）。浏览器和 Python 都是可选的，只有部分站点用得上。
+
+## What it reads, what it never does
+
+这一节把能力和边界写清楚，方便审阅时对着代码核。
+
+Reads:
+
+- public share pages, through the same data endpoints the page itself calls
+- session files already on this machine: `~/.claude/projects`, `~/.codex/sessions` and 13 more stores
+- only when you run `bulk.mjs` or `biji-notes.mjs`: conversations and voice notes belonging to the account **you** are already signed in to, through that browser session or `BIJI_TOKEN`
+
+Never:
+
+- uploads anything. Every byte fetched is written to a local file; no telemetry, no analytics, no reporting endpoint
+- sends conversation content to a model. The only network peers are the sites being read
+- posts, deletes, or changes settings on any site
+- opens the browser profile you use day to day; the DevTools channel has its own directory
+- runs shell commands other than launching the browser and the pinned Convolvger CLI
+
+The one deliberate exception: `bulk.mjs` goes through opencli to reuse the session you are already signed in to, which is the only way to read your own history without asking for a password. It writes files locally and stops there.
+
+Browser channel: launches Chrome or Edge with its own profile directory (`~/.chat-share-reader/chrome-profile`, override with `CSR_PROFILE`) on its own debug port (default 9333, `CSR_PORT`). It reuses a running browser only when the port and the profile both match what it recorded itself in `~/.chat-share-reader/browser.json`; a debug port owned by any other process is skipped, not borrowed.
+
+Convolvger channel: pinned to `convolvger==0.7.0` via `uvx --from`, so the code that runs is the code that was reviewed. Change it with `CSR_CONVOLVGER_SPEC`.
+
+Redaction: API keys, JWTs, bearer tokens and cloud credentials are masked at every level except `--redact off`. Home paths are masked by default. Emails and private IPs need `--redact strict`.
 
 输出语言跟随系统 locale，也可用 `CSR_LANG=en` 或 `CSR_LANG=zh` 强制。终端提示、导出文件的元信息标题、角色名都跟着变。
 
