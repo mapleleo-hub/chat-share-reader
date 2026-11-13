@@ -191,12 +191,14 @@ c.platform_sources[]
 
 | 现象 | 原因 | 规避 |
 | --- | --- | --- |
-| `'iframe'` 变成 `iframe`，报 ReferenceError | opencli eval 吃单引号 | 一律 base64 注入页面脚本 |
-| 表达式超约 5k 字符报 `SyntaxError: Invalid or unexpected token` | 参数长度上限 | 按 3000 字符分片写进 `window.__csr` |
-| `JSON.stringify({x:1})` 报 `missing ) after argument list` | 表达式里的 `{}` 被处理 | 同上，base64 注入天然绕过 |
+| 表达式超约 5k 字符报 `SyntaxError: Invalid or unexpected token` | 参数长度上限 | 超过 4000 字符改走明文分片（见下） |
 | URL 里的 `&` 被当命令分隔符 | 走了 shell:true | `execFile('bash', [OPENCLI, ...])` 且 `shell: false` |
 | `attach failed: Cannot access a chrome-extension:// URL` | 扩展临时失联 | 重试 4 次，间隔 2.5 s |
 | `opencli browser <s> frames` 返回空数组 | 未实现跨域 iframe 枚举 | 从 HTML 正则取 iframe src |
+
+**单引号和花括号不需要特殊处理。** 早先版本用 base64 注入，理由是"eval 吃单引号""含 `{}` 直接挂"。2026-11-13 逐项复测，`JSON.stringify({v:'a"b'})`、`(() => { const r=[{a:'x'}]; return JSON.stringify(r); })()`、多行箭头函数、反引号模板字符串在 `shell:false` 下全部原样通过。真实原因是更早的版本走了 shell，单引号被 shell 吃掉，被误记成 eval 的限制。
+
+分片仍然需要，但现在用明文：每个分片以 JSON 字符串字面量 push 进数组，最后 `eval(window.__csr.join(""))`。内容在命令行里可读，静态扫描不会把 base64 当成混淆载荷。
 
 opencli 的探测顺序是 `OPENCLI_BIN` → `~/.chat-share-reader/config.json` 的 `opencliBin` → `~/bin/opencli` → `/usr/local/bin/opencli` → `/opt/homebrew/bin/opencli` → PATH。Windows 上它常是 git-bash 包装脚本，脚本内部再 exec node，所以调用方必须经 bash 且 `shell:false`。
 

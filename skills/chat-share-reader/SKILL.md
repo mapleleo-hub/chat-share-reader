@@ -170,7 +170,7 @@ cdp 后端首次访问有 Cloudflare 挑战的站点时会打印提示，等你�
 2. **Cloudflare 是时段性拦截**，不是 cookie 缺失也不是代码问题。实测同一台机器上 `grok.com` 全站拦了约一小时后自行恢复。遇到就等，不要调 UA。
 3. **Perplexity 的参数不能精简**。27 个 `supported_block_use_cases` 少一个，接口照样 200 但不下发回答正文。
 4. **Grok 的就绪判定不能用正文长度**。导航栏本身有 400 多字，要用消息容器出现作为信号。
-5. **opencli eval 的三条限制**（改 `backend/opencli.mjs` 时相关）：吃单引号、单次表达式约 5k 字符上限、含 `{}` 直接挂。页面脚本一律 base64 分片注入。
+5. **opencli eval 只有一条限制**（改 `backend/opencli.mjs` 时相关）：单次入参超约 5k 字符会 SyntaxError。超过 4000 字符的页面脚本走明文分片，短脚本直接传，不要用 base64（会被安全扫描判成混淆载荷）。单引号、花括号、模板字符串在 `shell:false` 下都能原样传。
 
 各站接口细节、数据结构、失败形态见 `references/sites.md`。加站点的方法见 `README.md`。
 

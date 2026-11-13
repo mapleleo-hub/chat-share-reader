@@ -3,8 +3,11 @@
 //
 // 三条硬约束（实测，改之前先看 references/sites.md）：
 // 1. opencli 是 git-bash 包装脚本，必须经 bash 调用且 shell:false，否则 URL 里的 & 被当命令分隔
-// 2. eval 会吃掉单引号，所以页面脚本一律 base64 注入
-// 3. eval 单次表达式约 5k 字符上限，且含 {} 的表达式直接挂，所以 base64 分片
+// 2. eval 单次入参超过约 5k 字符会 SyntaxError，超长脚本要分片
+// 3. 单引号、花括号、模板字符串在 shell:false 下都能原样传进去，不需要转义
+//
+// 分片用 JSON 字符串字面量而不是 base64：内容保持明文可读，
+// 静态扫描不会把它当成混淆载荷（这是安全审计里的高危误判项）。
 import { execFile, execFileSync } from 'node:child_process';
 import { config, norm } from '../config.mjs';
 import os from 'node:os';
@@ -14,7 +17,9 @@ import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const exec = promisify(execFile);
-const CHUNK = 3000;
+// 实测 6k 会挂，4k 留足余量
+const DIRECT_MAX = 4000;
+const CHUNK = 2000;
 const VAR = 'window.__csr';
 
 export function findOpencli() {
@@ -81,15 +86,17 @@ export async function createSession({ name = 'csr', bin } = {}) {
     },
 
     async eval(code) {
-      const b64 = Buffer.from(code, 'utf8').toString('base64');
-      await cmd('eval', `${VAR} = ""`);
-      for (let i = 0; i < b64.length; i += CHUNK) {
-        await cmd('eval', `${VAR} += "${b64.slice(i, i + CHUNK)}"`);
+      const text = String(code == null ? '' : code);
+      // 短脚本直接传，一条命令就能在命令行里看清执行了什么
+      if (text.length <= DIRECT_MAX) return cmd('eval', text);
+
+      const parts = [];
+      for (let i = 0; i < text.length; i += CHUNK) parts.push(text.slice(i, i + CHUNK));
+      await cmd('eval', `${VAR} = []`);
+      for (const p of parts) {
+        await cmd('eval', `${VAR}.push(${JSON.stringify(p)})`);
       }
-      return cmd(
-        'eval',
-        `eval(new TextDecoder().decode(Uint8Array.from(atob(${VAR}),c=>c.charCodeAt(0))))`
-      );
+      return cmd('eval', `eval(${VAR}.join(""))`);
     },
 
     async waitReady({ minText = 200, tries = 10, delay = 3000, probe } = {}) {
