@@ -12,29 +12,16 @@
 // - 它的 chatgpt 适配依赖页面里的 turbo-stream，当前 chatgpt 分享页已不含该数据（实测报错）
 // - 它的 perplexity 适配落后于当前接口结构（只导出问题，没有正文）
 // - 它的 claude 要 bookmarklet 手工交接，不适合 agent 自动跑
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { config, norm } from './config.mjs';
+import { which } from './which.mjs';
 
 const exec = promisify(execFile);
 
 let cached = null;
-
-function which(name) {
-  try {
-    const cmd = process.platform === 'win32' ? 'where' : 'which';
-    const out = execFileSync(cmd, [name], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    const first = out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)[0];
-    return first && existsSync(first) ? first : '';
-  } catch {
-    return '';
-  }
-}
 
 function resolve() {
   if (cached !== null) return cached;

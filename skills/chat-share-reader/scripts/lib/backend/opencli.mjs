@@ -8,13 +8,14 @@
 //
 // 分片用 JSON 字符串字面量而不是 base64：内容保持明文可读，
 // 静态扫描不会把它当成混淆载荷（这是安全审计里的高危误判项）。
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { config, norm } from '../config.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { which } from '../which.mjs';
 
 const exec = promisify(execFile);
 // 实测 6k 会挂，4k 留足余量
@@ -32,16 +33,8 @@ export function findOpencli() {
   ].filter(Boolean);
   for (const p of candidates) if (existsSync(p)) return p;
 
-  // PATH 里找
-  try {
-    const cmd = process.platform === 'win32' ? 'where' : 'which';
-    const out = execFileSync(cmd, ['opencli'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-    const first = out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)[0];
-    if (first && existsSync(first)) return first;
-  } catch {
-    /* 没装 */
-  }
-  return '';
+  // PATH 里找（Windows 上的裸名脚本由 which 自己兜底）
+  return which('opencli');
 }
 
 export function available() {
