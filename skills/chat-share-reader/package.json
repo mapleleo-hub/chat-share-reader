@@ -1,7 +1,7 @@
 {
   "name": "chat-share-reader",
   "version": "0.5.1",
-  "description": "把 AI 对话与笔记的公开分享链接抓成本地 markdown，覆盖 ChatGPT / Claude / Gemini / Grok / Perplexity / DeepSeek / Kimi / Qwen / WorkBuddy / 得到大脑（biji.com）",
+  "description": "Export AI chat conversations (ChatGPT, Claude, Gemini, Grok, Perplexity, DeepSeek, Kimi, Qwen) and 15 local agent session stores (Claude Code, Codex, Cursor, opencode) to markdown. 把 AI 对话与得到笔记导出为 markdown，默认脱敏。",
   "type": "module",
   "bin": {
     "chat-share-reader": "scripts/read.mjs",
@@ -22,8 +22,15 @@
     "tests"
   ],
   "keywords": [
+    "chat-export",
+    "conversation-export",
+    "session-export",
     "chatgpt",
     "claude",
+    "claude-code",
+    "claude-skills",
+    "codex",
+    "cursor",
     "gemini",
     "grok",
     "perplexity",
@@ -31,6 +38,8 @@
     "得到大脑",
     "markdown",
     "export",
+    "backup",
+    "redact",
     "agent-skill"
   ],
   "license": "MIT"

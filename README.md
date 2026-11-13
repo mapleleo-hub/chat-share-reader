@@ -6,11 +6,19 @@ Export, back up, or archive AI chat conversations to markdown.
 
 Two inputs: public share links, and session files already on your disk. It reads the data endpoints behind each share page instead of reconstructing from rendered DOM, so tables, code fences, inline markup, and per-message timestamps come out intact.
 
+Use it when:
+
+- someone sends you a `chatgpt.com/share/...` or `claude.ai/share/...` link and you want the text on disk instead of scrolling a web page
+- you want to hand a previous agent session to a new one without re-pasting the whole thread
+- you need to find what you asked six months ago across Claude Code, Codex and Cursor, in one search
+
 [中文说明](README.zh.md)
 
 ```bash
 npx skills add mapleleo-hub/chat-share-reader
 ```
+
+Install links it into Claude Code, Codex, Cursor, Gemini CLI, Cline, opencode and 12 more agents.
 
 ## Requirements
 
