@@ -26,16 +26,18 @@ function shareId(url) {
 // 站内回听深链 [00:54:00](https://getnotes.seek:3240) 只在 App 里能跳，
 // 导出成 markdown 后留着是死链，还原成纯时间戳。
 const SEEK = /\[(\d{2}:\d{2}:\d{2})\]\(https:\/\/getnotes\.seek:\d+\)/g;
-const stripSeek = (s) => s.replace(SEEK, '**$1**');
+export const stripSeek = (s) => s.replace(SEEK, '**$1**');
 
-function clock(ms) {
+export function clock(ms) {
   const s = Math.floor((ms || 0) / 1000);
   return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
 }
 
 // 逐字稿按 90 秒切段，和界面上的段落感对齐；句子本身带标点，直接拼不用加分隔符
-function transcriptFrom(payload) {
-  const raw = payload && payload.c && payload.c.content;
+// 传完整信封 { h, c } 或只传 c 都能吃，登录态批量接口那侧返回的是后者
+export function transcriptFrom(payload) {
+  const holder = payload && payload.c ? payload.c : payload;
+  const raw = holder && holder.content;
   if (!raw) return '';
   let list;
   try {

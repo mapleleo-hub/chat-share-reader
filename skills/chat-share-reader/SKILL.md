@@ -1,6 +1,6 @@
 ---
 name: chat-share-reader
-description: "Export, back up, or archive AI chat conversations to markdown. Two inputs: public share links (ChatGPT, Claude, Gemini, Grok, Perplexity, DeepSeek, Kimi, Qwen, WorkBuddy, biji.com/得到大脑) and 15 local agent session stores (Claude Code, Codex, Cursor, opencode, Cline, Gemini CLI, Copilot CLI, Kimi Code, Antigravity, Hermes, pi, Oh My Pi, zcode, Qwen Code, Command Code). Search past sessions by keyword, filter by working directory, batch export, read compressed .jsonl.zst archives, and pipe a previous session's context into the current conversation. 导出、备份、归档 AI 对话为 markdown，支持公开分享链接和 15 种本机 agent 会话记录，可按关键词搜索、按工作目录筛选、批量导出，能读压缩归档。"
+description: "Export, back up, or archive AI chat conversations to markdown. Two inputs: public share links (ChatGPT, Claude, Gemini, Grok, Perplexity, DeepSeek, Kimi, Qwen, WorkBuddy, biji.com/得到大脑) and 15 local agent session stores (Claude Code, Codex, Cursor, opencode, Cline, Gemini CLI, Copilot CLI, Kimi Code, Antigravity, Hermes, pi, Oh My Pi, zcode, Qwen Code, Command Code). Also bulk-exports your own biji.com voice notes (class/meeting recordings) by date range, with optional transcripts. Search past sessions by keyword, filter by working directory, batch export, read compressed .jsonl.zst archives, and pipe a previous session's context into the current conversation. 导出、备份、归档 AI 对话为 markdown，支持公开分享链接和 15 种本机 agent 会话记录，可按关键词搜索、按工作目录筛选、批量导出，能读压缩归档；另支持按日期区间批量导出自己账号下的得到笔记录音笔记（含逐字稿）。"
 license: MIT
 metadata:
   openclaw:
@@ -42,6 +42,9 @@ triggers:
 - 得到笔记
 - 语音笔记
 - 课堂笔记
+- 录音笔记批量导出
+- 导出得到笔记
+- getnote
 ---
 
 # chat-share-reader
@@ -64,6 +67,10 @@ node scripts/read.mjs <url> [更多 url...] [--out DIR] [--stdout] [--json]
 node scripts/sessions.mjs list [--source claude|codex|workbuddy|all] [--limit 20] [--cwd 子串]
 node scripts/sessions.mjs search <关键词> [--limit 20] [--cwd 子串]
 node scripts/sessions.mjs export <id 前缀或路径> [--stdout] [--full] [--json]
+
+# 得到笔记账号内录音笔记批量导出（要 opencli 取登录态）
+node scripts/biji-notes.mjs list --since 2026-11-01 [--type class_audio]
+node scripts/biji-notes.mjs export --since 2026-11-11 --until 2026-11-12 --out DIR --transcript
 ```
 
 典型用法：`sessions.mjs export <id> --stdout` 接管道，把上一轮会话的上下文喂给当前的 agent。
@@ -121,6 +128,27 @@ cdp 后端首次访问有 Cloudflare 挑战的站点时会打印提示，等你�
 | Gemini | DOM | cookie | batchexecute RPC 逆向成本高；必须前台窗口 + 等十几秒渲染；虚拟滚动要往上滚才能载全 |
 | Qwen | 接口 | — | 阿里 WAF 把接口拦成挑战 HTML，未打通 |
 | Kimi | 接口 | — | 未实测 |
+| 得到笔记 | 接口 | localStorage 的 `token`（360 字符 JWT），走 Bearer | 独立脚本 `biji-notes.mjs`，不并进 `bulk.mjs`，原因见下 |
+
+### 得到笔记（biji.com）账号内批量导出
+
+走 `scripts/biji-notes.mjs`，和分享链接那条链路的接口不是一套（分享走免认证 `/share/<id>`，这里走登录态 `/notes/*`）。`--since` / `--until` 收 `YYYY-MM-DD`，`--type class_audio` 只取课堂与会议类录音，`--transcript` 额外产出逐字稿。
+
+四个接口口径，全部要 `Authorization: Bearer <token>`：
+
+| 接口 | 内容 |
+| --- | --- |
+| `/notes/list?limit=20&category=recording&sort=create_desc` | 列表，`c.list[].content` 已经是完整 markdown 正文 |
+| `/notes/<id>` | 单条详情，与列表的 `content` 逐行一致，只差图片签名串 |
+| `/notes/<id>/original` | 逐字稿，同分享接口，`c.content` 是字符串化 JSON |
+| `/notes/<id>/transcript` | 不存在，404 |
+
+四条坑，改之前先看：
+
+1. **不要在页面上下文发请求**。`get-notes.luojilab.com` 与 `www.biji.com` 跨域，页面里的 `fetch` 直接 `TypeError: Failed to fetch`，iframe 与 XHR 都一样死。只从页面取一次 token，之后请求走 Node 侧 curl。这也是它没并进 `bulk.mjs` 的原因，那边全是页面内脚本。
+2. **`limit` 服务端截断到 20**，`total_items` 给的是全量数字。翻页用 `has_more` + `next_cursor`（`?cursor=<next_cursor>`），实测首尾相接不丢条，加大 `limit` 无效。
+3. **`created_at` 是本地时间字符串**（`YYYY-MM-DD HH:mm:ss`），按日期前缀比较。`timestamps.created_at` 是另一个字段的 ISO 串，`new Date()` 只对它安全，对前者会抛 `RangeError: Invalid time value`。
+4. **正文里的图片是签名 URL**，`Expires` 恰好等于笔记创建时间加 30 天。过期后导出的 markdown 里图全部裂开，要长期归档得另存图片，文字部分不受影响。
 
 三条硬约束，改之前先看：
 
@@ -184,6 +212,7 @@ SQLite 走 Node 22 内置 `node:sqlite`，只读，无依赖。
 
 - 只对公开分享有效，私有分享拿不到。
 - biji.com 只有语音笔记带逐字稿；纯手写、纯图片笔记只有正文。
+- 得到笔记正文里的图片是 30 天签名链接，文字永久，图片过期后裂开。
 - Perplexity 一次最多 20 轮，`has_next_page` 为真说明还有后续页。
 - 各站接口都是前端自用的私有接口，改版就断。
 - Codex 会自己收拾归档目录，压缩分片可能被合并或删掉。真要长期留档，先用 `export` 存成 markdown，别指望原始 rollout 一直在。

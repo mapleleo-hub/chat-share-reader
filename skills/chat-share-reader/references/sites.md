@@ -135,6 +135,54 @@ c.note.tags[]
 
 另一个容易踩的坑：`note.content` 自带 h3/h4 分级，走通用 `buildDoc` 会被 `demoteHeadings` 再降两级变成 h5/h6。站点模块返回 `demote: false` 跳过降级。
 
+## biji.com 登录态：账号内批量导出（scripts/biji-notes.mjs）
+
+**通道：页面取 token + Node 侧 curl**
+
+分享接口（`/share/<id>`）和登录态接口（`/notes/*`）是两套不同的后端路径，前者免认证只看单条，后者能翻你自己账号的全部历史。批量走这组：
+
+```
+GET https://get-notes.luojilab.com/voicenotes/web/notes/list?limit=20&category=recording&sort=create_desc[&cursor=<next_cursor>]
+GET https://get-notes.luojilab.com/voicenotes/web/notes/<note_id>
+GET https://get-notes.luojilab.com/voicenotes/web/notes/<note_id>/original
+GET https://get-notes.luojilab.com/voicenotes/web/notes/<note_id>/transcript     # 不存在，404
+```
+
+鉴权只有一种写法可行：
+
+| 写法 | 结果 |
+| --- | --- |
+| `Authorization: Bearer <token>` | 200 |
+| `Authorization: <token>` | 400 `ParseTokenFailed` |
+| `token: <token>` | 400 `ParseTokenFailed` |
+| 不带头（靠 cookie） | 400 `ParseTokenFailed` |
+
+`token` 在 `www.biji.com` 的 `localStorage.getItem("token")`，360 字符 JWT，payload 里有 `sid` / `sg` / `uid` / `env`。浏览器地址栏直接打开接口 URL 也会 `ParseTokenFailed`，cookie 不参与。
+
+**页面上下文发不了请求。** `get-notes.luojilab.com` 与 `www.biji.com` 跨域，页面里 `fetch` 报 `TypeError: Failed to fetch`，同源 iframe 的 `contentWindow.fetch` 与 XHR 同样失败（不像 bulk.mjs 里那些同源站点能用 iframe 绕开改写）。所以流程是：opencli 打开 `www.biji.com` 取一次 token，请求全部走 Node 侧 `httpGetJson`（curl，顺带处理系统代理）。
+
+列表返回信封 `{ h, c }`，`h.c` 为 0 才成功。`c` 里：
+
+```
+c.total_items         # 账号下该类笔记总数，不是本页条数
+c.list[]              # 本页数据，每页 20 条
+c.has_more
+c.next_cursor         # 传给 ?cursor= 取下一页
+c.platform_sources[]
+```
+
+`limit` 加大到 100 无效，服务端固定截断 20，必须靠 cursor 翻页。实测 cursor 首尾相接（本页末条 09:35:34 与下页首条 08:35:29 连续），没有丢条，也没有重叠。
+
+`c.list[]` 的字段和 `/notes/<id>` 返回的 `c` 完全同构，`content` 就是完整 markdown 正文（约 5-10 KB），**不需要再逐条打详情**。逐行比对一篇课笔记：151 行里只有 1 行不同，差异是内嵌图片的签名串。所以 N 条笔记只要 ⌈N/20⌉ 次请求。
+
+`created_at` / `updated_at` 是本地时间字符串 `YYYY-MM-DD HH:mm:ss`，按日期前缀比较最稳。`timestamps.created_at` 是另一个字段，ISO 串，`new Date()` 能吃；对顶层那个用 `new Date()` 会抛 `RangeError: Invalid time value`。`time_scale` 是「昨天」「过去7天」这类相对标签，不是时长。
+
+`note_type` 取值：`class_audio` 是课堂与会议类录音，只有这类有逐字稿。`/notes/<id>/original` 的响应形状与分享接口 `/share/<id>/original` 一致，`c.content` 是字符串化 JSON，`sentence_list[].start_time` 为毫秒。
+
+**图片会过期。** 正文里的 `![](https://get-notes.umiwi.com/...)` 带 `Expires=` 与 `OSSAccessKeyId` 签名，`Expires` 恰好等于笔记创建时间加 30 天（实测 2026-11-11 的笔记到 2026-12-11，11-12 的到 12-12）。过期后 markdown 里的图全部裂开。文字永久有效，图片要长期留档必须当场下载。
+
+失败形态：token 过期返回 `{"message":"ParseTokenFailed"}`（没有 `h` 字段）；`h.c` 非 0 时 `h.e` 带原因。
+
 ## opencli 后端的使用约束
 
 只有走 opencli 后端时相关。用 cdp 后端（默认在没有 opencli 的机器上）没有这些限制，页面脚本直接 Runtime.evaluate 执行。
