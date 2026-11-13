@@ -12,9 +12,13 @@
 
 ```bash
 npx skills add mapleleo-hub/chat-share-reader
+# 或走 ClawHub 注册表
+npx clawhub install chat-share-reader
 ```
 
 装完会自动链接到 Claude Code、Codex、Cursor、Gemini CLI、Cline、opencode、Copilot、Kimi Code、Antigravity、Hermes 等 19 个 agent。
+
+不联网回传，没有埋点：抓到的东西全部落本地文件。`SKILL.md` 里有一节写清它读什么、不做什么，可以对着代码核。
 
 ## 解决什么
 
@@ -49,9 +53,11 @@ node skills/chat-share-reader/scripts/sessions.mjs export <id> --json
 
 ```bash
 --redact off      # 原文
---redact home     # 默认
---redact strict   # 再遮邮箱、令牌（sk-、ghp_、JWT、Bearer）、内网 IP
+--redact home     # 默认：家目录与令牌
+--redact strict   # 再遮邮箱与内网 IP
 ```
+
+API key、JWT、Bearer 令牌、云厂商凭据在任何档位都遮，只有 `off` 放行。以前这三类令牌也归 strict 管，意味着一份要转发的导出文件里可能留着真密钥，现在不留给档位决定了。
 
 公网 IP 和 commit hash 不动，这些通常是有意义的信息。脱敏写在 `lib/redact.mjs`，所有导出路径都走它，第三方 Convolvger 通道产出的 markdown 也会就地过一遍。脱敏幂等，对已脱敏的文件再跑一次不会有二次变化。
 
