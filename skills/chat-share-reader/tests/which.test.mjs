@@ -6,7 +6,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { which } from '../scripts/lib/which.mjs';
@@ -36,7 +36,12 @@ test('which 能查到 PATH 里无扩展名的裸脚本', () => {
     const file = path.join(dir, name);
     writeFileSync(file, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     process.env.PATH = `${dir}${path.delimiter}${old || ''}`;
-    assert.equal(which(name), file);
+    // 不能直接比字符串：Windows 的 where 可能回 8.3 短名（GitHub Runner 上是
+    // C:\Users\RUNNER~1\...），跟 mkdtemp 给的长名指向同一个文件但字面不同。
+    // 两边 realpath 到长名再比，避免把路径写法当成功能问题。
+    const got = which(name);
+    assert.ok(got, 'where 应该能查到无扩展名的裸脚本');
+    assert.equal(realpathSync(got), realpathSync(file));
   } finally {
     process.env.PATH = old;
     rmSync(dir, { recursive: true, force: true });
