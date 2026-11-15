@@ -6,7 +6,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { which } from '../scripts/lib/which.mjs';
@@ -36,12 +36,13 @@ test('which 能查到 PATH 里无扩展名的裸脚本', () => {
     const file = path.join(dir, name);
     writeFileSync(file, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     process.env.PATH = `${dir}${path.delimiter}${old || ''}`;
-    // 不能直接比字符串：Windows 的 where 可能回 8.3 短名（GitHub Runner 上是
-    // C:\Users\RUNNER~1\...），跟 mkdtemp 给的长名指向同一个文件但字面不同。
-    // 两边 realpath 到长名再比，避免把路径写法当成功能问题。
     const got = which(name);
     assert.ok(got, 'where 应该能查到无扩展名的裸脚本');
-    assert.equal(realpathSync(got), realpathSync(file));
+    // 不比整条路径字符串。Windows 上 os.tmpdir() 给的是 8.3 短名
+    // （C:\Users\RUNNER~1\...），where 回的却是长名，realpath 两个方向都不展开，
+    // 于是同一个文件两种写法。这里验「查到的就是刚写下的那个文件」，与路径写法无关。
+    assert.equal(path.basename(got), name);
+    assert.equal(readFileSync(got, 'utf8'), '#!/bin/sh\nexit 0\n');
   } finally {
     process.env.PATH = old;
     rmSync(dir, { recursive: true, force: true });
