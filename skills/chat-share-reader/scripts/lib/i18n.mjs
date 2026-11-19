@@ -30,12 +30,21 @@ export function t(zh, en) {
   return isZh ? zh : en;
 }
 
-/** 角色名统一在这里翻译，解析器里存中文，输出时映射 */
+/**
+ * 角色显示名统一在这里翻译，解析器里存中文，输出时映射。
+ *
+ * 只影响展示。机器可读角色走 lib/roles.mjs，那条链路与语言无关，
+ * 下游要判说话人请用 machineRole()，不要用这里的返回值。
+ */
 const ROLE_MAP = {
   用户: 'User',
   助手: 'Assistant',
   课堂笔记: 'Notes',
   逐字稿: 'Transcript',
+  思考: 'Thinking',
+  工具: 'Tool',
+  工具结果: 'Tool result',
+  系统: 'System',
   Assistant: 'Assistant',
   User: 'User',
 };

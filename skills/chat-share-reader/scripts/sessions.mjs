@@ -7,13 +7,16 @@
 //   node sessions.mjs search <关键词> [--source ...] [--limit 20] [--cwd <子串>] [--json]
 //   node sessions.mjs export [<会话 id 或文件路径>] [--current] [--out DIR] [--stdout] [--full]
 //                            [--json] [--redact off|home|strict] [--within 分钟]
+//   node sessions.mjs dump   [--jsonl|--json] [--source ...] [--since <日期|7d|毫秒>] [--out FILE]
+//                            [--full] [--redact ...] [--skip-types a,b]
 //
 // export 不给目标时导当前会话：先认宿主 agent 的会话标识环境变量，
 // 认不出再按工作目录和最近活跃时间挑，挑中哪个会打印出来。
 //
 // 和 read.mjs 的分工：那个处理别人发来的分享链接，这个读你自己机器上的会话文件。
 import { readdir, stat, writeFile, mkdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { createWriteStream, existsSync } from 'node:fs';
+import { once } from 'node:events';
 import os from 'node:os';
 import path from 'node:path';
 import * as claudeLocal from './lib/local/claude.mjs';
@@ -30,11 +33,14 @@ import * as workbuddyLocal from './lib/local/workbuddy.mjs';
 import { makeParser } from './lib/local/jsonl-generic.mjs';
 import { lines as readLines, readText } from './lib/local/zst.mjs';
 import { buildDoc, safeName, normalizeMessages } from './lib/md.mjs';
-import { expandShards, stitchMessages } from './lib/merge.mjs';
+import { expandShards, stitchMessages, dedupeShards } from './lib/merge.mjs';
 import { createRedactor } from './lib/redact.mjs';
 import { t, role as rn } from './lib/i18n.mjs';
+import { messageRecord, parseSince } from './lib/provenance.mjs';
+import { machineRole } from './lib/roles.mjs';
 
-const home = os.homedir();
+// CSR_HOME 只给测试用：把各个源的根目录指到一个假家目录里，才能用真文件跑回归。
+const home = process.env.CSR_HOME || os.homedir();
 
 // kind: jsonl 每个会话一个文件（或目录树），sqlite 用自带 list/parse 的实现
 const SOURCES = {  claude: {
@@ -189,7 +195,13 @@ async function* headLines(file, max = 500) {
 
 // 会话真正的线程 id 在文件里，不在文件名上。Codex 的 fork 分片会用新 id 命名，
 // 但 session_meta 仍然复制父线程的 id，所以合并分片只能靠它。
-async function sessionIdOf(file) {
+//
+// 同时带出会话类型：Codex 的 thread_source 是 user / subagent / guardian_review。
+// guardian_review 那批是审批回执（正文是 {"risk_level":...} 的 JSON），没有任何对话，
+// 批量导出要按类型直接跳过；不能拿「解析后 0 条消息」当判据，那和损坏文件分不开。
+// 只读前几行，不解析整个文件。
+async function sessionMetaOf(file) {
+  const meta = { sessionId: '', type: '', agentPath: '', startAt: '' };
   try {
     for await (const line of headLines(file, 5)) {
       const s = line.trim();
@@ -200,13 +212,28 @@ async function sessionIdOf(file) {
       } catch {
         continue;
       }
-      if (j.type === 'session_meta' && j.payload) return j.payload.session_id || j.payload.id || '';
-      if (j.type === 'session-meta' && j.sessionId) return j.sessionId;
+      if (j.type === 'session_meta' && j.payload) {
+        meta.sessionId = j.payload.session_id || j.payload.id || '';
+        meta.type = j.payload.thread_source || '';
+        meta.agentPath = j.payload.agent_path || '';
+        meta.startAt = j.payload.timestamp || '';
+        // 老版本没有 thread_source，但 payload.source.subagent 存在同样说明是子会话
+        if (!meta.type && j.payload.source && j.payload.source.subagent) meta.type = 'subagent';
+        return meta;
+      }
+      if (j.type === 'session-meta' && j.sessionId) {
+        meta.sessionId = j.sessionId;
+        return meta;
+      }
     }
   } catch {
-    /* 读不动就当没有 id */
+    /* 读不动就当没有 meta */
   }
-  return '';
+  return meta;
+}
+
+async function sessionIdOf(file) {
+  return (await sessionMetaOf(file)).sessionId;
 }
 
 async function peekJsonl(file, name) {
@@ -306,6 +333,7 @@ async function discover(names, limit = 200) {
           id: idOfFile(f),
           family: familyOfFile(f),
           time: timeFromName(f) || st.mtimeMs,
+          mtime: st.mtimeMs,
           size: Math.round(st.size / 1024) + 'K',
           bytes: st.size,
           ref: cfg.refOf ? cfg.refOf(f) : f,
@@ -334,19 +362,27 @@ function parseArgs(argv) {
     source: 'all',
     limit: 20,
     cwd: '',
-    out: './sessions',
+    out: '',
     stdout: false,
     full: false,
     json: false,
     current: false,
     redact: 'home',
     within: 60,
+    since: '',
+    jsonl: false,
+    skipTypes: [...DEFAULT_SKIP_TYPES].join(','),
+    noSkip: false,
+    limitSet: false,
   };
   const positional = [];
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === '--source') opts.source = rest[++i];
-    else if (a === '--limit') opts.limit = Number(rest[++i]);
+    else if (a === '--limit') {
+      opts.limit = Number(rest[++i]);
+      opts.limitSet = true;
+    }
     else if (a === '--cwd') opts.cwd = rest[++i] || '';
     else if (a === '--out') opts.out = rest[++i];
     else if (a === '--stdout') opts.stdout = true;
@@ -356,6 +392,10 @@ function parseArgs(argv) {
     else if (a === '--redact') opts.redact = rest[++i] || 'home';
     else if (a === '--no-redact') opts.redact = 'off';
     else if (a === '--within') opts.within = Number(rest[++i]) || 60;
+    else if (a === '--since') opts.since = rest[++i] || '';
+    else if (a === '--jsonl') opts.jsonl = true;
+    else if (a === '--skip-types') opts.skipTypes = rest[++i] || '';
+    else if (a === '--no-skip') opts.noSkip = true;
     else positional.push(a);
   }
   const names = opts.source === 'all' ? Object.keys(SOURCES) : [opts.source];
@@ -570,7 +610,12 @@ async function cmdSearch(keyword, opts, names) {
           time: fmtTime(h.startedAt || h.time),
           cwd: (h.meta && h.meta.cwd) || '',
           ref: h.file || h.ref,
-          matched: h.matched.map((m) => ({ role: rn(m.role), time: m.time, snippet: snippet(m.body, keyword) })),
+          matched: h.matched.map((m) => ({
+            role: machineRole(m.role),
+            speaker: rn(m.role),
+            time: m.time,
+            snippet: snippet(m.body, keyword),
+          })),
         })),
         null,
         2
@@ -617,41 +662,103 @@ async function guessSource(file) {
   return 'claude';
 }
 
+// 默认不进对话流的会话类型。Codex 的 guardian_review 是审批回执（正文是
+// {"risk_level":...}），它挂在父会话的 session_id 上，按会话归组时会混进父会话，
+// 只能按文件类型单独剔。export 和 dump 共用这一份名单。
+const DEFAULT_SKIP_TYPES = new Set(['guardian_review']);
+
+function skipReason(type) {
+  if (type === 'guardian_review') {
+    return t(
+      '这是 Codex 的 guardian_review 审批子会话，整份只有审批回执，没有对话可导',
+      'This is a Codex guardian_review approval subsession: approval verdicts only, no conversation to export'
+    );
+  }
+  return t(
+    `这是 ${type} 类型的子会话，没有可导出的对话`,
+    `This is a ${type} subsession with no conversation to export`
+  );
+}
+
+// 「0 条消息」有两种来源，要分开报：审批/子会话类型本来就没有对话，不是解析
+// 坏了；其他情况才说明格式变了或者文件是空壳。
+async function emptyReason(picked) {
+  const file = picked[0] && (picked[0].file || String(picked[0].ref));
+  const meta = file ? await sessionMetaOf(file).catch(() => null) : null;
+  if (meta && meta.type) return skipReason(meta.type);
+  return t('这个会话里没有可导出的对话', 'This session has no exportable messages');
+}
+
 async function cmdExport(target, opts, names) {
   // 不给目标就是导当前会话。零参数是 agent 在会话里最自然的用法：
   // 「把这段对话存下来」，不应该要求它先去 list 查一个 id。
   const wantCurrent = opts.current || !target;
   let picked = [];
+  // seed 是用户点名（或自动选中）的那一场，扩展分片前先记下来：
+  // dedupeShards 会按时间重排，扩完 picked[0] 已经不一定是它了。
+  let seed = null;
 
   if (wantCurrent) {
     const cur = await findCurrent(opts, names);
     console.error(t(`当前会话：${cur.how}`, `current session: ${cur.how}`));
-    picked = await expandShards(cur.picked, cur.items, sessionIdOf);
+    seed = cur.picked[0];
+    picked = await expandShards(cur.picked, cur.items, sessionIdOf, { deep: true });
   } else if (existsSync(target)) {
     const name = await guessSource(target);
-    picked = [{ name, ref: target, file: target, time: 0 }];
+    seed = { name, ref: target, file: target, time: 0 };
+    picked = [seed];
   } else {
     const items = await discover(names);
-    picked = items.filter(
+    const matched = items.filter(
       (x) =>
         (x.id && String(x.id).includes(target)) ||
         (x.family && String(x.family).includes(target)) ||
         (x.ref && typeof x.ref === 'string' && path.basename(x.ref).includes(target))
     );
-    if (!picked.length) throw new Error(t('找不到匹配的会话：', 'No matching session: ') + target);
-    picked = await expandShards(picked, items, sessionIdOf);
+    if (!matched.length) throw new Error(t('找不到匹配的会话：', 'No matching session: ') + target);
+    seed = matched[0];
+    picked = await expandShards(matched, items, sessionIdOf, { deep: true });
+  }
+
+  // 审批类分片挂在父会话的 session_id 上，扩展分片时会被一起收进来。
+  // 分两种处理：点名要的就是它，直接说清楚没有对话；顺带收进来的，剔掉。
+  const seedMeta = seed.file ? await sessionMetaOf(seed.file).catch(() => null) : null;
+  if (seedMeta && DEFAULT_SKIP_TYPES.has(seedMeta.type)) throw new Error(skipReason(seedMeta.type));
+  if (picked.length > 1) {
+    const seedKey = seed.file || String(seed.ref);
+    const kept = [];
+    for (const p of picked) {
+      const file = p.file || String(p.ref);
+      if (file === seedKey || !p.file) {
+        kept.push(p);
+        continue;
+      }
+      const m = await sessionMetaOf(p.file).catch(() => null);
+      if (m && DEFAULT_SKIP_TYPES.has(m.type)) continue;
+      kept.push(p);
+    }
+    picked = kept;
   }
 
   const cfg = SOURCES[picked[0].name];
   if (!cfg) throw new Error(t('未知来源：', 'Unknown source: ') + picked[0].name);
 
+  // 分片来源挂在消息上。合并、去重、排序之后仍要能回答「这条出自哪个文件」，
+  // 下游拿它对回原文；脱敏不作用于这个字段，它是句柄不是内容。
   const parts = [];
-  for (const p of picked) parts.push(await cfg.parser.parse(p.ref, { full: opts.full }));
+  for (const p of picked) {
+    const file = p.file || String(p.ref);
+    const parsed = await cfg.parser.parse(p.ref, { full: opts.full });
+    parts.push({
+      ...parsed,
+      messages: (parsed.messages || []).map((m) => ({ ...m, shard: file })),
+    });
+  }
 
   const merged = stitchMessages(parts);
   const messages = normalizeMessages(merged.messages);
   const note = merged.note;
-  if (!messages.length) throw new Error(t('这个会话里没有可导出的对话', 'This session has no exportable messages'));
+  if (!messages.length) throw new Error(await emptyReason(picked));
 
   const first = messages.find((m) => m.role === '用户');
   const title = (first ? first.body : messages[0].body)
@@ -667,16 +774,44 @@ async function cmdExport(target, opts, names) {
   const safeTitle = r.apply(title);
 
   if (opts.json) {
+    // 会话级定位：线程 id 从解析结果里取，取不到退回文件名里的 UUID。
+    // Codex 的 fork 分片也带父线程 id，所以同一场对话的两个文件拿到的是同一个 session。
+    const session =
+      (parts.find((p) => p && p.meta && p.meta.sessionId) || {}).meta?.sessionId ||
+      picked[0].id ||
+      idOfFile(picked[0].file || '') ||
+      '';
+    const meta0 = picked[0].file ? await sessionMetaOf(picked[0].file).catch(() => null) : null;
+    const segments = picked.map((p) => p.file || String(p.ref));
+
     return console.log(
       JSON.stringify(
         {
           source: picked[0].name,
+          session,
+          session_type: (meta0 && meta0.type) || '',
           title: safeTitle,
           // segments 是给下游继续读文件的句柄，保持原样不脱敏；
           // 脱敏只作用于会被展示、复制、分享的内容字段。
-          segments: picked.map((p) => p.file || String(p.ref)),
+          segments,
           redact: r.level,
-          messages: messages.map((m) => ({ role: m.role, time: m.at || m.time, body: r.apply(m.body) })),
+          messages: messages.map((m, i) => {
+            const body = r.apply(m.body);
+            const shard = m.shard || segments[0];
+            return {
+              ...messageRecord({
+                source: picked[0].name,
+                session,
+                shard,
+                shardIndex: Math.max(0, segments.indexOf(shard)),
+                shardCount: segments.length,
+                index: i,
+                message: m,
+                body,
+              }),
+              body,
+            };
+          }),
         },
         null,
         2
@@ -695,12 +830,193 @@ async function cmdExport(target, opts, names) {
   });
 
   if (opts.stdout) return console.log(md);
-  await mkdir(opts.out, { recursive: true });
-  const out = path.resolve(opts.out, safeName(safeTitle) + '.md');
+  // dump 用 --out / stdout，export 不给就是 ./sessions；两者共用 opts.out，
+  // 所以默认值留空，别在这里以外的地方假定它已经有值。
+  const outDir = opts.out || './sessions';
+  await mkdir(outDir, { recursive: true });
+  const out = path.resolve(outDir, safeName(safeTitle) + '.md');
   await writeFile(out, md, 'utf8');
   console.log(
     `OK ${picked[0].name} ${messages.length} 条${picked.length > 1 ? `（合并 ${picked.length} 个分片）` : ''}${opts.redact === 'off' ? '' : t(` · 脱敏 ${opts.redact}`, ` · redacted ${opts.redact}`)} -> ${out}`
   );
+}
+
+// 批量导出：一场会话一个 family，流式往外写、不在内存里攒。
+//
+// 为什么按 family 归组而不是一个文件一条：Codex 的 fork 会把父线程的历史整段复制
+// 进新文件，逐个文件导会让同一句话出现多遍。归组键用文件里的线程 id
+// （session_meta.session_id），不用文件名，因为分片名用的是新 id。跟 export 一致：
+// 同一场对话无论拆分几个文件，导出结果里只出现一次，分片信息标在每条记录上。
+//
+// 会话类型（session_meta.thread_source）是文件级属性，在解析前判。Codex 的
+// guardian_review 审批子会话是挂在父会话上的分片（session_id 与父会话相同），
+// 整份只有 {"risk_level":...} 审批回执。等到解析完再拿「0 条消息」当判据，
+// 就分不清它和真正损坏的文件，也会让 227 个空分片混进父会话的处理里。
+async function cmdDump(opts, names) {
+  const since = opts.since ? parseSince(opts.since) : 0;
+  const skip = new Set(
+    (opts.noSkip ? '' : opts.skipTypes)
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
+  const limit = opts.limitSet ? opts.limit : 1000000;
+  const all = await discover(names, limit);
+  // 没有文件的源（SQLite）没有 mtime，用会话自己的时间
+  const items = since ? all.filter((it) => (it.mtime || it.time || 0) >= since) : all;
+
+  // 归组：JSONL 按线程 id 归，SQLite 每条本来就已经是一场会话
+  const groups = new Map();
+  const skipped = {};
+  for (const it of items) {
+    const cfg = SOURCES[it.name];
+    if (!cfg) continue;
+    if (cfg.kind === 'sqlite') {
+      const key = `${it.name}:${it.id}`;
+      groups.set(key, {
+        key,
+        source: it.name,
+        session: String(it.id || ''),
+        time: it.time || 0,
+        type: '',
+        shards: [{ ...it, meta: null }],
+      });
+      continue;
+    }
+    const file = it.file;
+    if (!file) continue;
+    const meta = await sessionMetaOf(file);
+    // 文件级跳过：guardian_review 这类分片整份没有对话，不必读全文
+    if (meta.type && skip.has(meta.type)) {
+      skipped[meta.type] = (skipped[meta.type] || 0) + 1;
+      continue;
+    }
+    const session = meta.sessionId || it.id || idOfFile(file);
+    const key = `${it.name}:${session}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = { key, source: it.name, session, time: it.time || 0, type: '', shards: [] };
+      groups.set(key, g);
+    }
+    g.shards.push({ ...it, meta });
+    g.time = Math.max(g.time, it.time || 0, it.mtime || 0);
+  }
+
+  // 类型跟最早的分子走：父会话先建，fork 后建，先建的那个才是这场对话的类型
+  for (const g of groups.values()) {
+    if (SOURCES[g.source].kind === 'sqlite') continue;
+    g.shards.sort((a, b) => (a.time || 0) - (b.time || 0));
+    g.type = (g.shards[0].meta && g.shards[0].meta.type) || '';
+  }
+
+  const out = opts.out
+    ? createWriteStream(path.resolve(opts.out), { encoding: 'utf8' })
+    : process.stdout;
+  if (out === process.stdout) {
+    // 被 | head 截断时不要报 EPIPE 退出码
+    process.stdout.on('error', (e) => {
+      if (e.code !== 'EPIPE') throw e;
+    });
+  }
+  const write = async (obj) => {
+    if (!out.write(JSON.stringify(obj) + '\n')) await once(out, 'drain');
+  };
+
+  const r = createRedactor(opts.redact);
+  let sessions = 0;
+  let messagesOut = 0;
+  let skippedEmpty = 0;
+  const failures = [];
+
+  const order = [...groups.values()].sort((a, b) => (b.time || 0) - (a.time || 0));
+  for (const g of order) {
+    const cfg = SOURCES[g.source];
+    const shards = dedupeShards(g.shards);
+    const parts = [];
+    for (const [i, s] of shards.entries()) {
+      const file = s.file || String(s.ref);
+      try {
+        const parsed = await cfg.parser.parse(s.ref, { full: opts.full });
+        parts.push({
+          ...parsed,
+          messages: (parsed.messages || []).map((m) => ({
+            ...m,
+            shard: file,
+            shardIndex: i,
+            shardType: (s.meta && s.meta.type) || '',
+          })),
+        });
+      } catch (e) {
+        failures.push({ source: g.source, session: g.session, shard: file, error: String(e.message || e) });
+      }
+    }
+    const merged = stitchMessages(parts);
+    const messages = normalizeMessages(merged.messages);
+    if (!messages.length) {
+      skippedEmpty++;
+      continue;
+    }
+
+    sessions++;
+    messagesOut += messages.length;
+    const startedAt = messages.find((m) => m.at)?.at || '';
+    const recOf = (m, i, body) => ({
+      ...messageRecord({
+        source: g.source,
+        session: g.session,
+        family: g.session,
+        shard: m.shard || shards[0].file || String(shards[0].ref),
+        shardIndex: m.shardIndex || 0,
+        shardCount: shards.length,
+        index: i,
+        message: m,
+        body,
+      }),
+      session_type: g.type || '',
+      shard_type: m.shardType || '',
+      started_at: startedAt,
+    });
+
+    if (opts.json) {
+      await write({
+        kind: 'session',
+        source: g.source,
+        family: g.session,
+        session: g.session,
+        session_type: g.type || '',
+        shards: shards.map((s) => s.file || String(s.ref)),
+        started_at: startedAt,
+        msg_count: messages.length,
+        messages: messages.map((m, i) => {
+          const body = r.apply(m.body);
+          return { ...recOf(m, i, body), body };
+        }),
+      });
+      continue;
+    }
+
+    for (const [i, m] of messages.entries()) {
+      const body = r.apply(m.body);
+      await write({ kind: 'message', ...recOf(m, i, body), body });
+    }
+  }
+
+  if (out !== process.stdout) await new Promise((res) => out.end(res));
+
+  const span = since ? t(`（mtime ≥ ${new Date(since).toISOString()}）`, ` (mtime >= ${new Date(since).toISOString()})`) : '';
+  const skipDetail = Object.entries(skipped)
+    .map(([k, n]) => `${k} ${n}`)
+    .join(', ');
+  const skippedTotal = Object.values(skipped).reduce((n, v) => n + v, 0);
+  console.error(
+    t(
+      `完成：${sessions} 场会话，${messagesOut} 条消息，按类型跳过 ${skippedTotal} 个分片${skipDetail ? `（${skipDetail}）` : ''}，空会话 ${skippedEmpty} 个${failures.length ? `，${failures.length} 个分片解析失败` : ''}${span}`,
+      `done: ${sessions} sessions, ${messagesOut} messages, ${skippedTotal} shards skipped by type${skipDetail ? ` (${skipDetail})` : ''}, ${skippedEmpty} empty${failures.length ? `, ${failures.length} shards failed` : ''}${span}`
+    )
+  );
+  for (const f of failures.slice(0, 5)) {
+    console.error(`  FAIL ${f.source} ${f.session} ${path.basename(f.shard)} :: ${f.error}`);
+  }
 }
 
 function cmdSources() {
@@ -724,6 +1040,7 @@ try {
   if (cmd === 'list') await cmdList(opts, names);
   else if (cmd === 'search') await cmdSearch(positional[0], opts, names);
   else if (cmd === 'export') await cmdExport(positional[0], opts, names);
+  else if (cmd === 'dump') await cmdDump(opts, names);
   else if (cmd === 'sources') cmdSources();
   else {
     console.error(
@@ -733,8 +1050,11 @@ try {
         '  node sessions.mjs search <关键词> [--source ...] [--limit 20] [--cwd <子串>] [--json]\n' +
         '  node sessions.mjs export [<id 或路径>] [--current] [--out DIR] [--stdout] [--full] [--json]\n' +
         '                          [--redact off|home|strict] [--within 60]\n' +
+        '  node sessions.mjs dump [--jsonl|--json] [--source <名字>|all] [--since 2026-11-01|7d] [--out FILE]\n' +
+        '                        [--full] [--redact off|home|strict] [--skip-types guardian_review] [--no-skip]\n' +
         '\n' +
         'export 不给目标时导当前会话（认宿主 agent 的会话标识，认不出按工作目录 + 最近活跃挑）。\n' +
+        'dump 批量导全部会话：--jsonl 一条消息一行，--json 一场会话一行；--since 按文件 mtime 增量。\n' +
         '脱敏默认 home：家目录换成 ~，strict 再遮邮箱、令牌、内网 IP，off 导出原文。'
     );
     process.exit(2);

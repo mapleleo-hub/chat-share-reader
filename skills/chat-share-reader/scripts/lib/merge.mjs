@@ -30,25 +30,32 @@ export function dedupeShards(list) {
  * @param picked  已命中的分片，第一项是种子
  * @param items   同类来源下的全部候选项
  * @param idOf    读文件拿真实线程 id 的函数；测试里传桩，线上传 sessionIdOf
+ * @param deep    true 时总是逐个读文件头比对，不只靠文件名。
+ *                只靠文件名会漏：子代理分片常常只用自己的新 id 命名（实测一场会话
+ *                文件名能收到 5 个分片，而按 session_meta 比实际有 14 个），
+ *                漏了就会少导消息，导出的 segments 也点不全。读文件头很便宜
+ *                （只读前几行，压缩文件读到第一块就停），所以导出时走 deep。
  */
-export async function expandShards(picked, items, idOf) {
+export async function expandShards(picked, items, idOf, { deep = false } = {}) {
   const seed = picked[0];
   const seedSid = await idOf(seed.file || String(seed.ref));
-  if (seedSid) {
-    // 文件名里带父线程 id 的分片，先按路径收，不用开文件
-    for (const it of items) {
-      if (!it.file || picked.includes(it)) continue;
-      if (it.source !== seed.source) continue;
-      if (String(it.file).includes(seedSid)) picked.push(it);
-    }
-    // 一个都没补到，说明分片换了名字，这时才逐个读文件头比对。
-    // 放在条件里是为了不让每次导出都全量扫一遍候选目录。
-    if (picked.length <= 1) {
-      for (const it of items) {
-        if (!it.file || picked.includes(it)) continue;
-        if (it.source !== seed.source) continue;
-        if ((await idOf(it.file)) === seedSid) picked.push(it);
-      }
+  if (!seedSid) return dedupeShards(picked);
+
+  const sameSource = items.filter(
+    (it) => it.file && it.source === seed.source && !picked.includes(it)
+  );
+
+  // 文件名里带父线程 id 的分片，先按路径收，不用开文件
+  for (const it of sameSource) {
+    if (String(it.file).includes(seedSid)) picked.push(it);
+  }
+
+  // 一个都没补到，说明分片换了名字，这时才逐个读文件头比对；deep 时总是读。
+  // 放在条件里是为了不让普通导出每次都全量扫一遍候选目录。
+  if (deep || picked.length <= 1) {
+    for (const it of sameSource) {
+      if (picked.includes(it)) continue;
+      if ((await idOf(it.file)) === seedSid) picked.push(it);
     }
   }
   return dedupeShards(picked);

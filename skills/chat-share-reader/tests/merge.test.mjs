@@ -52,6 +52,27 @@ test('expandShards 分片改名时回落到读 session_meta', async () => {
   assert.equal(out.length, 2);
 });
 
+test('expandShards deep 时按 meta 收齐不带父 id 的分片', async () => {
+  // 实测形态：一场会话里按文件名只能收到一部分，子代理分片只用自己的新 id
+  const seed = shard(`rollout-${sid}.jsonl`, 100);
+  const byName = shard(`rollout-${sid}_fork.jsonl`, 200);
+  const byMeta = shard('rollout-2026-11-13T20-00-00-other-id.jsonl', 300);
+  const items = [seed, byName, byMeta];
+
+  let reads = 0;
+  const idOf = async (f) => {
+    reads++;
+    return String(f) === byMeta.file ? sid : sid;
+  };
+
+  const shallow = await expandShards([seed], items, idOf);
+  assert.deepEqual(shallow.map((x) => x.file).sort(), [seed.file, byName.file].sort());
+
+  const deep = await expandShards([seed], items, idOf, { deep: true });
+  assert.deepEqual(deep.map((x) => x.file).sort(), [seed.file, byName.file, byMeta.file].sort());
+  assert.ok(reads > 1);
+});
+
 test('expandShards 不跨来源合并', async () => {
   const seed = shard('a.jsonl', 100);
   const alien = { name: 'claude', source: 'claude', file: `/s/${sid}.jsonl`, ref: '', time: 200 };
