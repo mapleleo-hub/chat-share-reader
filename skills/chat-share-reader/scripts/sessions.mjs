@@ -918,8 +918,21 @@ async function cmdDump(opts, names) {
       if (e.code !== 'EPIPE') throw e;
     });
   }
+  // 管道被下游关掉（| head）时算正常结束：不再继续导，也不报错退出。
+  // 光挂一个 error 监听不够，once(out, 'drain') 会把同一个 EPIPE 变成 rejection。
+  let broken = false;
   const write = async (obj) => {
-    if (!out.write(JSON.stringify(obj) + '\n')) await once(out, 'drain');
+    if (broken) return false;
+    try {
+      if (!out.write(JSON.stringify(obj) + '\n')) await once(out, 'drain');
+      return true;
+    } catch (e) {
+      if (e.code === 'EPIPE') {
+        broken = true;
+        return false;
+      }
+      throw e;
+    }
   };
 
   const r = createRedactor(opts.redact);
@@ -930,6 +943,7 @@ async function cmdDump(opts, names) {
 
   const order = [...groups.values()].sort((a, b) => (b.time || 0) - (a.time || 0));
   for (const g of order) {
+    if (broken) break;
     const cfg = SOURCES[g.source];
     const shards = dedupeShards(g.shards);
     const parts = [];
