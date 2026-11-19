@@ -39,6 +39,8 @@ node skills/chat-share-reader/scripts/sessions.mjs search "关键词" --cwd 项�
 node skills/chat-share-reader/scripts/sessions.mjs export                 # 当前会话
 node skills/chat-share-reader/scripts/sessions.mjs export <id> --stdout
 node skills/chat-share-reader/scripts/sessions.mjs export <id> --json
+node skills/chat-share-reader/scripts/sessions.mjs dump --jsonl --since 7d
+node skills/chat-share-reader/scripts/sessions.mjs dump --json --since 2026-11-01 --out all.jsonl
 ```
 
 `export` 不给参数就是导当前会话。它先读宿主 agent 传进环境的会话标识（`CODEBUDDY_SESSION_ID`、`CLAUDE_SESSION_ID`、`CODEX_THREAD_ID` 等），读不到就按「工作目录里的最近会话」挑，挑中哪个会打印出来。兜底是启发式的，只有 WorkBuddy 的变量在本机验证过。
@@ -46,6 +48,10 @@ node skills/chat-share-reader/scripts/sessions.mjs export <id> --json
 最后一个配管道最有用：把某次会话导出来，直接喂给当前的 agent。
 
 `search` 只匹配对话正文，不会因为系统提示或记忆注入里出现过某个词就误报。`export` 会把这个会话的所有 fork 分片按时间合并去重，压缩成 `.jsonl.zst` 的归档会话也能直接读。
+
+`--json` 与 `dump` 的结构化输出里，角色分两个字段：`role` 只有 `user` / `assistant` / `tool` / `system` 四个值，与界面语言、模型名无关，下游判说话人用这个；`speaker` 是显示名，会随语言和模型名变。每条消息还带 `session`、`shard`、`msg_index`、`ts` 和 `hash`（正文指纹），可以锚定到「第几条」，也能在重跑时判重。
+
+`dump` 一次跑完全部会话：`--jsonl` 一条消息一行、`--json` 一场会话一行，`--since` 按文件 mtime 做增量。Codex 的 `guardian_review` 审批子会话整份只有审批回执，解析前就按类型跳过。归组按 `session_meta.session_id`，父子分片不会重复计数。
 
 ## 脱敏
 

@@ -12,7 +12,7 @@ deja-vu（`vshulcz/deja-vu`）是一份社区维护的格式登记表，覆盖 4
 | 源 | 路径 | 形态 | 关键点 |
 | --- | --- | --- | --- |
 | Claude Code | `~/.claude/projects/<项目>/<sessionId>.jsonl` | JSONL | 只取 `type: user\|assistant`；`isSidechain` 为子代理，跳过 |
-| Codex CLI | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` + `~/.codex/archived_sessions/*.jsonl.zst` | JSONL / zstd | 正文在 `event_msg/item_completed`，不要用 `response_item/message`（含 developer 系统提示）；归档是 `.jsonl.zst`，读过的会被解压搬回 `sessions/`，两处都要扫；fork 分片按 `session_meta.session_id` 归组 |
+| Codex CLI | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` + `~/.codex/archived_sessions/*.jsonl.zst` | JSONL / zstd | 正文在 `event_msg/item_completed`，不要用 `response_item/message`（含 developer 系统提示）；归档是 `.jsonl.zst`，读过的会被解压搬回 `sessions/`，两处都要扫；fork 分片按 `session_meta.session_id` 归组；`session_meta.thread_source` 为 `guardian_review` 的是审批子会话，没有对话 |
 | WorkBuddy | `~/.workbuddy/projects/<工作区 slug>/<sessionId>.jsonl` | JSONL | 每行 `session-meta` 或 `message`，正文在 `content[].text`；用户消息前的 `<system-reminder>` 注入要整块剥掉；同级 `<sessionId>/tool-results/` 不是会话 |
 | pi | `~/.pi/agent/sessions/<项目>/*.jsonl` | JSONL | `type: message`，跳过 `role: system` |
 | Oh My Pi | `~/.omp/agent/sessions/<项目>/*.jsonl` | JSONL | 与 pi 同格式，另有 `type: title` 存标题 |
@@ -39,8 +39,10 @@ deja-vu（`vshulcz/deja-vu`）是一份社区维护的格式登记表，覆盖 4
 
 两件事都不能靠文件名或原文判断，写在 `scripts/lib/local/zst.mjs` 与 `sessions.mjs` 里：
 
-- **压缩**：`.jsonl.zst` 直接用 `indexOf` 搜不到任何东西，`readFile` 得到乱码。走 `readText()` / `lines()`，内部优先用 Node 22 的 `zlib` zstd，不可用时 `spawn('zstd', ['-dc', file])`。大文件必须用 `lines()`，整体读会撞上 V8 的字符串上限。
-- **分片**：Codex 同一会话会有根 rollout 加若干 fork，文件名类似 `rollout-<时间>-<父线程>_<新线程>.jsonl`，`session_meta.session_id` 一律是父线程。归组看 session_meta，不看文件名；合并后按消息自带的 ISO 时间排，工具消息继承上一条的时间避免被甩到最前。
+- **压缩**：`.jsonl.zst` 直接用 `indexOf` 搜不到任何东西，`readFile` 得到乱码。走 `readText()` / `lines()`，内部用 Node 22 的 `node:zlib` zstd（`createZstdDecompress`），没有系统 `zstd` 回退（engines 已要求 >=22.15）。大文件必须用 `lines()`，整体读会撞上 V8 的字符串上限。
+- **分片**：Codex 同一会话会有根 rollout 加若干 fork，文件名类似 `rollout-<时间>-<父线程>_<新线程>.jsonl`，`session_meta.session_id` 一律是父线程。归组看 session_meta，不看文件名：实测同一场会话按文件名只能收到 5 个分片，按 meta 实际有 14 个。合并后按消息自带的 ISO 时间排，工具消息继承上一条的时间避免被甩到最前。
+- **会话类型**：`session_meta.thread_source` 有 `user` / `subagent` / `guardian_review` / `voice_chat`。子代理（`subagent`）有真实对话，与父线程同 `session_id`，归组时合并；`guardian_review` 是工具审批回执（正文形如 `{"risk_level":"low","outcome":"allow"}`），本机 487 个 rollout 里占 227 个，解析出来必然是 0 条，批量导出按类型在解析前跳过，不靠「0 条消息」推断。
+- **空壳文件**：归档目录里也有只含 `session_meta` 的单行文件（正文在服务端，`history_mode: paginated`）。这类会话解析为 0 条属正常，dump 汇总里算「空会话」。
 
 ## 探测过但没有会话数据的
 

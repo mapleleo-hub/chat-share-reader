@@ -71,7 +71,7 @@ triggers:
 
 两个入口，覆盖同一件事的两半：**你自己机器上已有的 agent 会话记录**（15 个来源，完全离线，不需要浏览器），和**别人发来的分享链接**（十个站点，走网络）。
 
-本机会话走 `scripts/sessions.mjs`：列出、搜索、按工作目录筛、导出某条或当前会话。分享链接走 `scripts/read.mjs`。两者输出都是同一套 markdown。
+本机会话走 `scripts/sessions.mjs`：列出、搜索、按工作目录筛、导出某条或当前会话、批量 dump。分享链接走 `scripts/read.mjs`。两者输出都是同一套 markdown。
 
 只需要 Node 22.15 以上（用到内置 `WebSocket`、`node:sqlite` 和 zstd）。浏览器和 Python 都是可选的，只有部分站点用得上。
 
@@ -117,6 +117,8 @@ node scripts/sessions.mjs search <关键词> [--limit 20] [--cwd 子串]
 node scripts/sessions.mjs export [<id 前缀或路径>] [--current] [--stdout] [--full] [--json]
 node scripts/sessions.mjs export --redact off            # 要完整原文时
 node scripts/sessions.mjs export --redact strict         # 额外遮邮箱、令牌、内网 IP
+node scripts/sessions.mjs dump --jsonl --since 7d        # 批量导出，一条消息一行
+node scripts/sessions.mjs dump --json --since 2026-11-01 --out all.jsonl
 
 # 得到笔记账号内录音笔记批量导出（要 opencli 取登录态）
 node scripts/biji-notes.mjs list --since 2026-11-01 [--type class_audio]
@@ -256,6 +258,56 @@ node scripts/sessions.mjs export 01a1af92 --json      # 结构化，含 segments
 node scripts/sessions.mjs export <路径> --full         # 带上思考与工具调用
 ```
 
+### 结构化输出：角色、定位、批量
+
+`--json`（`export` / `search`）与 `dump` 里的角色分两个字段，不要混用：
+
+- `role`：机器可读，只有 `user` / `assistant` / `tool` / `system` 四个值，与界面语言、模型名无关。下游判说话人只看这个。
+- `speaker`：显示名（`用户`、`Codex`、`WorkBuddy`、`Claude`），跟随界面语言和出现过的模型名变化，只用于展示。
+
+归一化在 `lib/roles.mjs`：解析器写「用户」或 `user` 算用户发言，其余一律算 `assistant`，工具与系统只认显式列出的名字。新增解析器沿用这个约定即可，不用改映射表。
+
+每条消息带定位字段，`export --json` 与 `dump --jsonl` 形状一致：
+
+| 字段 | 含义 |
+| --- | --- |
+| `source` | 来源名（`codex`、`workbuddy` …） |
+| `session` / `family` | 会话线程 id。一场对话只有一个，父子分片相同 |
+| `shard` | 这条消息出自哪个文件 |
+| `shard_index` / `shard_count` | 分片序号与总数，只有多分片时才出现 |
+| `shard_type` | 分片自己的类型（`user` / `subagent`），说明这句是主对话还是子代理说的 |
+| `msg_index` | 在这条导出流里的序号，从 0 开始，同一场会话内连续 |
+| `ts` | 消息时间，有 ISO 给 ISO，只有 `HH:MM` 就原样给，不补假日期；工具消息没有时间时给空串，顺序看 `msg_index` |
+| `hash` | 正文指纹（sha256 前 16 位，空白归一化后算）。按原文算，换脱敏档位重跑指纹不变 |
+| `chars` / `body` | 导出正文长度与正文（受脱敏档位影响） |
+
+定位到「第几条」用 `session` + `msg_index`；判重跑用 `hash`；想回到原文就按 `shard` 打开对应文件。
+
+### 批量导出（dump）
+
+`dump` 一次处理全部会话，不逐场起进程：
+
+```bash
+dump --jsonl                       # 一条消息一行，流式输出，内存不涨
+dump --json --out all.jsonl        # 一场会话一行，messages 嵌在记录里
+dump --since 7d                    # 只要 mtime 在 7 天内变动过的（也认 2026-11-01 / 24h / 90m / 毫秒）
+dump --source codex --skip-types guardian_review
+```
+
+归组口径：一场会话一个 `family`，父子分片合并成一条消息流。Codex 的 fork 会把父线程历史整段复制进新文件，140 个文件可能只是 86 场对话，按文件计数必然多算。分片信息不掉，标在每条记录的 `shard` / `shard_index` 上。
+
+`--since` 按文件 mtime 判（SQLite 源没有文件，用会话时间），增量备份靠它；`--out` 不写文件时走 stdout，被 `| head` 截断不报错。
+
+退出码：0 表示跑完（允许有跳过），1 表示参数错或全部失败。汇总写在 stderr，stdout 只有数据，可以直接进管道。
+
+### 按类型跳过：Codex 的 guardian_review
+
+Codex 的审批子会话 `thread_source: guardian_review` 挂在父会话的 `session_id` 上，整份只有 `{"risk_level":...}` 审批回执，没有一句对话。本机实测 487 个 rollout 里有 227 个是这种，逐个导只会得到「没有可导出的对话」。
+
+所以 `dump` 在解析前按文件类型直接剔，汇总里报 `按类型跳过 227 个分片（guardian_review 227）`。判据是 `session_meta.thread_source`，不是「解析出 0 条消息」，后者和损坏文件分不开。`export` 点名导这种会话会明确报是审批子会话，不会静默退到父会话上；扩展分片时也不会把审批分片混进正文。
+
+`--skip-types` 可以加别的类型（比如 `subagent`），`--no-skip` 关掉跳过。
+
 口径坑，代码里已处理，改解析器前先看：
 
 1. **Claude Code**：一个文件混着 attachment、api-request、cost-state 等运行期事件，只取 `type: user|assistant`。子代理消息带 `isSidechain: true`，默认跳过。
@@ -264,10 +316,11 @@ node scripts/sessions.mjs export <路径> --full         # 带上思考与工具
 4. **Cursor**：SQLite 的 `cursorDiskKV` 表，key 为 `composerData:<uuid>`，正文在 `conversation[].text`（1=用户，2=助手）。
 5. **zcode**：`session` / `message` / `part` 三表，正文取 `part.data.type === "text"`。
 6. **压缩 rollout**：Codex 归档会话是 `archived_sessions/*.jsonl.zst`，且读过之后会被解压搬回 `sessions/`。`lib/local/zst.mjs` 用 Node 内置 zstd 透明解压，不再依赖系统 `zstd` 命令，两个目录都扫。直接 grep `.zst` 永远搜不到，别据此判断会话不存在。
-7. **fork 分片**：同一会话可能有十几个 `rollout-<时间>-<线程>_<分支>.jsonl`，分片名会用新 id，但 `session_meta.session_id` 仍是父线程的。`export` 按它归组、按消息时间排序、按角色加正文前缀去重。
+7. **fork 分片**：同一会话可能有十几个 `rollout-<时间>-<线程>_<分支>.jsonl`，分片名会用新 id，但 `session_meta.session_id` 仍是父线程的。`export` 与 `dump` 都按它归组、按消息时间排序、按角色加正文前缀去重。归组不能用文件名：实测一场会话按文件名只能收到 5 个分片，按 `session_meta` 比实际有 14 个，漏下的就是少导的消息和点不全的 `segments`。`export` 为此会扫一遍同源文件头（487 个 codex 文件约 0.4 秒，只读前几行，压缩文件读到第一块就停）。
 8. **WorkBuddy**：`~/.workbuddy/projects/<工作区 slug>/<sessionId>.jsonl`，同级 `<sessionId>/tool-results/` 要排除。每条用户消息前挂 `<system-reminder>` 包住的 user_info、identity 文件和自定义指令，必须整块剥掉，否则标题会变成 `<system-reminder`。
 9. **search 只匹配正文**：原文里一条记忆注入带过项目路径，就能让几十个无关会话命中。所以 search 要先 parse 成 messages 再匹配，不能对文件原文 `indexOf`。
 10. **当前会话识别**：`CODEBUDDY_SESSION_ID`（WorkBuddy）本机实测可用。`CLAUDE_SESSION_ID`、`CODEX_THREAD_ID`、`QWEN_SESSION_ID`、`KIMI_SESSION_ID` 按社区实现写入，本机没装这些 agent，未验证。取不到就回落到「工作目录匹配 + 最近 60 分钟」，这条是启发式的，会有挑错的可能。
+11. **Codex 会话类型**：`session_meta.thread_source` 取值有 `user` / `subagent` / `guardian_review` / `voice_chat`。`guardian_review` 是审批回执，挂在父会话的 `session_id` 上，按会话归组会混进父会话，所以要在解析前按文件类型单独剔。`subagent` 有真实对话，保留（合并进父会话，正文带 `shard_type: subagent`）。
 
 SQLite 走 Node 22 内置 `node:sqlite`，只读，无依赖。
 
@@ -280,6 +333,8 @@ SQLite 走 Node 22 内置 `node:sqlite`，只读，无依赖。
 - 各站接口都是前端自用的私有接口，改版就断。
 - Codex 会自己收拾归档目录，压缩分片可能被合并或删掉。真要长期留档，先用 `export` 存成 markdown，别指望原始 rollout 一直在。
 - `search` 不带 `--cwd` 时要解析全部会话，本机约四千个文件十几秒。日常找项目相关的对话先加 `--cwd 项目名`。
+- `dump` 导全量时本机约 30 秒（719 场会话、9700 条消息），慢在解析正文，不在归组。日常增量跑加 `--since 7d`。
+- `hash` 只对正文做空白归一化，同一场会话里两轮完全同文的消息会得到相同指纹（实测会有，比如两次贴同一张图的注入头）。判唯一性用 `session` + `msg_index`，`hash` 只用来比对同一条消息在两次导出里是否一致。
 
 ## 调研过，别重复找
 

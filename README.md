@@ -77,11 +77,16 @@ node skills/chat-share-reader/scripts/sessions.mjs list --limit 20
 node skills/chat-share-reader/scripts/sessions.mjs search "keyword"
 node skills/chat-share-reader/scripts/sessions.mjs export              # the session you are in right now
 node skills/chat-share-reader/scripts/sessions.mjs export <id-prefix> --stdout
+node skills/chat-share-reader/scripts/sessions.mjs export <id-prefix> --json
+node skills/chat-share-reader/scripts/sessions.mjs dump --jsonl --since 7d
+node skills/chat-share-reader/scripts/sessions.mjs dump --json --since 2026-11-01 --out all.jsonl
 ```
 
 `export` with no argument exports the session you are currently in. It reads the host agent's session id from the environment (`CODEBUDDY_SESSION_ID`, `CLAUDE_SESSION_ID`, `CODEX_THREAD_ID`, ...), and falls back to "newest session in this working directory within the last hour". The fallback is a heuristic, so it prints which session it picked. Only the WorkBuddy variable is verified on a real machine; the rest are written from community implementations.
 
 `export --stdout` pipes straight into another agent, which is the fastest way to carry a previous conversation's context forward.
+
+`dump` exports everything in one process instead of one call per session: `--jsonl` writes one message per line, `--json` writes one session per line, `--since` filters by file mtime. Each record carries `source`, `session`, `shard`, `msg_index`, `ts` and a content `hash`, and `role` is always one of `user`, `assistant`, `tool`, `system` regardless of UI language or model name (`speaker` holds the display name). Codex `guardian_review` approval subsessions contain no conversation and are skipped by type before parsing.
 
 ## Redaction
 
