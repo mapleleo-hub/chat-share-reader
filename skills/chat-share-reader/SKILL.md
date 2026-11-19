@@ -1,6 +1,6 @@
 ---
 name: chat-share-reader
-description: "Export, backup, or archive AI chat conversations to markdown. Two inputs: public share links (ChatGPT, Claude, Gemini, Grok, Perplexity, DeepSeek, Kimi, Qwen, WorkBuddy, biji.com) and 15 local agent session stores (Claude Code, Codex, Cursor, opencode, Cline, Gemini CLI and more). Use when the user asks to save a shared conversation, export the chat they are in now (no args), search past sessions, filter by directory, batch export a site, read a compressed .jsonl.zst archive, or feed a session into another agent. Bulk mode exports your own accounts' history through the browser session you are already signed in to. Tokens are always masked, home paths by default, emails with --redact strict. Also exports biji.com voice notes and transcripts. 导出、备份、归档 AI 对话为 markdown，支持分享链接与本机 15 种 agent 会话记录；不传参数导当前会话，可搜索、筛选、批量导出、读压缩归档、喂给另一个 agent；令牌一律遮，家目录默认遮；另可导出得到笔记录音与逐字稿。"
+description: "Export, back up, or archive AI chat conversations to markdown. Reads two inputs: local agent sessions already on this machine (Claude Code, Codex, WorkBuddy, Cursor, pi, opencode, zcode, Cline, Gemini CLI and more, 15 sources), and public share links (ChatGPT, Claude, Gemini, Grok, Perplexity, DeepSeek, Kimi, Qwen, WorkBuddy, biji.com). Use when asked where a session file lives, to read, search, list or export past chats, to export the conversation in progress (no args), to save a shared link, batch export a site, read a .jsonl.zst archive, or feed a session into another agent. Local sessions work offline, no browser, nothing uploaded. Tokens masked; home paths masked by default. 导出、备份、归档 AI 对话为 markdown。两个入口同权：本机已有的 15 种 agent 会话记录，以及分享链接。可用于查 session 文件在哪、读或搜自己的历史聊天、按目录列会话、导当前对话、存分享链接、批量导出、读压缩归档、喂给另一个 agent。本机会话离线可用，不需要浏览器。令牌一律遮，家目录默认遮。"
 license: MIT
 metadata:
   openclaw:
@@ -40,15 +40,23 @@ triggers:
 - deepseek 分享
 - workbuddy.link
 - 读聊天记录
+- 本机聊天记录
+- 本机会话
+- 我的对话记录
+- 找 session
+- session 在哪
+- 读 jsonl 会话
 - 导出对话
 - 备份对话
 - 归档聊天记录
+- 浏览历史对话
 - 批量导出会话
 - 搜索历史会话
 - 对话转 markdown
-- 搜索历史会话
 - 导出 Claude Code 会话
 - 导出 Codex 会话
+- 导出 WorkBuddy 会话
+- 导出 Cursor 会话
 - biji.com
 - 得到大脑
 - 得到笔记
@@ -61,7 +69,9 @@ triggers:
 
 # chat-share-reader
 
-两个入口，解决同一件事的两半：**别人发来的分享链接**，和**你自己机器上的会话记录**。
+两个入口，覆盖同一件事的两半：**你自己机器上已有的 agent 会话记录**（15 个来源，完全离线，不需要浏览器），和**别人发来的分享链接**（十个站点，走网络）。
+
+本机会话走 `scripts/sessions.mjs`：列出、搜索、按工作目录筛、导出某条或当前会话。分享链接走 `scripts/read.mjs`。两者输出都是同一套 markdown。
 
 只需要 Node 22.15 以上（用到内置 `WebSocket`、`node:sqlite` 和 zstd）。浏览器和 Python 都是可选的，只有部分站点用得上。
 
