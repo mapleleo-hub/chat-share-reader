@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { machineRole, MACHINE_ROLES } from '../scripts/lib/roles.mjs';
-import { fingerprint, parseSince, stampOf } from '../scripts/lib/provenance.mjs';
+import { fingerprint, epochOf, parseSince, stampOf } from '../scripts/lib/provenance.mjs';
 
 test('解析器实际产出的显示名都落到四个机器角色里', () => {
   const seen = ['Claude', 'Codex', 'WorkBuddy', 'Agent', 'Cursor', 'pi', 'Gemini', '课堂笔记', '逐字稿'];
@@ -55,4 +55,18 @@ test('parseSince 认日期、相对量与毫秒，认不出报错', () => {
   assert.equal(parseSince('90m', now), now - 90 * 60000);
   assert.equal(parseSince('1700000000000'), 1700000000000);
   assert.throws(() => parseSince('上个月'), /看不懂/);
+});
+
+test('epochOf 把时间原文换成毫秒，只有时分的宁可返回 null 也不补假日期', () => {
+  assert.equal(epochOf('2026-11-13T02:00:01.000Z'), Date.parse('2026-11-13T02:00:01.000Z'));
+  assert.equal(epochOf('2026-11-13T10:00'), new Date(2026, 10, 13, 10, 0).getTime());
+  assert.equal(epochOf(1700000000000), 1700000000000);
+  // 文件 mtime 是浮点，实测拿到过 1795075120835.4502。文档承诺的是「毫秒数」，
+  // 小数部分既没用，也会让下游以为这不是时间戳。
+  assert.equal(epochOf(1795075120835.4502), 1795075120835);
+  // HH:MM 缺日期，补今天就是造假；调用方据此省略字段
+  assert.equal(epochOf('23:19'), null);
+  assert.equal(epochOf(''), null);
+  assert.equal(epochOf(undefined), null);
+  assert.equal(epochOf('不是时间'), null);
 });

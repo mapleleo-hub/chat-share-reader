@@ -121,11 +121,11 @@ const lines = (stdout) =>
     .filter((l) => l.trim())
     .map((l) => JSON.parse(l));
 
-test('dump --jsonl 一台机器只出一条消息流：fork 历史不重复计数', async () => {
+test('dump 一台机器只出一条消息流：fork 历史不重复计数', async () => {
   const f = await fixture();
   try {
     // fixture 里另有一场 2020 年的会话，--since 把它排掉，只看 fork 合并
-    const r = await cli(f.home, ['dump', '--jsonl', '--source', 'codex', '--since', '2026-01-01']);
+    const r = await cli(f.home, ['dump', '--source', 'codex', '--since', '2026-01-01']);
     assert.equal(r.code, 0, r.stderr);
     const recs = lines(r.stdout);
     assert.ok(recs.length > 0, r.stderr);
@@ -136,12 +136,12 @@ test('dump --jsonl 一台机器只出一条消息流：fork 历史不重复计�
     assert.ok(bodies.includes('分叉后追问'));
     assert.ok(bodies.includes('分叉后回答'));
 
-    // 父子分片同属一个 family，下游按 family 计数才等于会话数
-    const families = new Set(recs.map((x) => x.family));
-    assert.deepEqual([...families], [PARENT]);
+    // 父子分片归到同一个 session，下游按 session 计数才等于会话数
+    // （0.7.0 起不再输出 family：它在这个归组口径下恒等于 session）
     assert.ok(recs.every((x) => x.session === PARENT));
+    assert.ok(recs.every((x) => !('family' in x)));
 
-    // 两个分片都要被标出来，且序号在家族内自洽
+    // 两个分片都要被标出来，且序号在会话内自洽
     const shards = new Set(recs.map((x) => x.shard));
     assert.equal(shards.size, 2);
     assert.ok(recs.every((x) => x.shard_count === 2));
@@ -151,10 +151,10 @@ test('dump --jsonl 一台机器只出一条消息流：fork 历史不重复计�
   }
 });
 
-test('dump --jsonl 每条消息带机器角色、序号与指纹', async () => {
+test('dump 每条消息带机器角色、序号与指纹', async () => {
   const f = await fixture();
   try {
-    const r = await cli(f.home, ['dump', '--jsonl', '--source', 'codex', '--redact', 'off', '--since', '2026-01-01']);
+    const r = await cli(f.home, ['dump', '--source', 'codex', '--redact', 'off', '--since', '2026-01-01']);
     const recs = lines(r.stdout);
     const roles = new Set(recs.map((x) => x.role));
     assert.deepEqual([...roles].sort(), ['assistant', 'user']);
@@ -175,12 +175,12 @@ test('dump --jsonl 每条消息带机器角色、序号与指纹', async () => {
 test('dump 默认按类型跳过 guardian_review，导出时说明原因', async () => {
   const f = await fixture();
   try {
-    const r = await cli(f.home, ['dump', '--jsonl', '--source', 'codex']);
+    const r = await cli(f.home, ['dump', '--source', 'codex']);
     assert.ok(!r.stdout.includes(GUARDIAN), 'guardian 分片不该出现在任何记录里');
     assert.ok(/按类型跳过 1 个分片（guardian_review 1）/.test(r.stderr), r.stderr);
 
     // --no-skip 把审批分片读进来：它没有对话正文，所以消息数不变、也不会多出一场会话
-    const noisy = await cli(f.home, ['dump', '--jsonl', '--source', 'codex', '--no-skip']);
+    const noisy = await cli(f.home, ['dump', '--source', 'codex', '--no-skip']);
     assert.equal(noisy.code, 0, noisy.stderr);
     assert.ok(/按类型跳过 0 个分片/.test(noisy.stderr), noisy.stderr);
     assert.ok(!noisy.stdout.includes('risk_level'), '审批回执不该进消息流');
@@ -196,14 +196,14 @@ test('dump 默认按类型跳过 guardian_review，导出时说明原因', async
 test('dump --since 按对话时间增量，旧会话不出现', async () => {
   const f = await fixture();
   try {
-    const blocked = await cli(f.home, ['dump', '--jsonl', '--source', 'codex', '--since', '2026-01-01']);
+    const blocked = await cli(f.home, ['dump', '--source', 'codex', '--since', '2026-01-01']);
     assert.ok(!blocked.stdout.includes('很久以前'));
     assert.ok(blocked.stdout.includes('第一句提问'));
 
-    const all = await cli(f.home, ['dump', '--jsonl', '--source', 'codex', '--since', '2000-01-01']);
+    const all = await cli(f.home, ['dump', '--source', 'codex', '--since', '2000-01-01']);
     assert.ok(all.stdout.includes('很久以前'));
 
-    const bad = await cli(f.home, ['dump', '--jsonl', '--since', '上个月']);
+    const bad = await cli(f.home, ['dump', '--since', '上个月']);
     assert.equal(bad.code, 1);
     assert.ok(bad.stderr.includes('看不懂'), bad.stderr);
   } finally {
@@ -226,12 +226,12 @@ test('dump --since 不把「刚被重新解压的旧对话」当成新会话', a
     const now = new Date();
     await utimes(stale, now, now);
 
-    const r = await cli(f.home, ['dump', '--jsonl', '--source', 'codex', '--since', '2026-11-01']);
+    const r = await cli(f.home, ['dump', '--source', 'codex', '--since', '2026-11-01']);
     assert.ok(!r.stdout.includes('刚被重新解压的旧对话'), 'mtime 新但对话旧的文件不该进 --since 窗口');
     assert.ok(r.stdout.includes('第一句提问'));
 
     // 但窗口放开时应当照常导出，不是被永久丢掉
-    const all = await cli(f.home, ['dump', '--jsonl', '--source', 'codex', '--since', '2000-01-01']);
+    const all = await cli(f.home, ['dump', '--source', 'codex', '--since', '2000-01-01']);
     assert.ok(all.stdout.includes('刚被重新解压的旧对话'));
   } finally {
     await rm(f.home, { recursive: true, force: true });
@@ -265,10 +265,30 @@ test('dump --json 一场会话一行，messages 嵌在记录里', async () => {
     const recs = lines(r.stdout);
     assert.equal(recs.length, 1);
     assert.equal(recs[0].kind, 'session');
-    assert.equal(recs[0].family, PARENT);
+    assert.equal(recs[0].session, PARENT);
+    assert.ok(!('family' in recs[0]));
     assert.equal(recs[0].msg_count, 4);
     assert.equal(recs[0].messages.length, 4);
     assert.equal(recs[0].shards.length, 2);
+  } finally {
+    await rm(f.home, { recursive: true, force: true });
+  }
+});
+
+test('--jsonl 只是默认行为的旧别名，输出一字不差', async () => {
+  // 它曾经是个独立的「流式模式」开关，后来默认就流式了，标志没有任何消费者。
+  // 留着只为不打断旧脚本：必须与不给标志时逐字节相同，也不能反过来改变 --json。
+  const f = await fixture();
+  try {
+    const args = ['dump', '--source', 'codex', '--since', '2026-01-01'];
+    const plain = await cli(f.home, args);
+    const alias = await cli(f.home, ['dump', '--jsonl', ...args.slice(1)]);
+    assert.equal(alias.code, 0, alias.stderr);
+    assert.equal(alias.stdout, plain.stdout);
+
+    // 与 --json 同时出现时，--json 才是决定输出形状的那个
+    const withJson = await cli(f.home, ['dump', '--jsonl', '--json', ...args.slice(1)]);
+    assert.equal(withJson.stdout, (await cli(f.home, ['dump', '--json', ...args.slice(1)])).stdout);
   } finally {
     await rm(f.home, { recursive: true, force: true });
   }

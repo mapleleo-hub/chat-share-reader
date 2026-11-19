@@ -1,6 +1,6 @@
 // 消息级定位：一条记录要能回答「哪一场、哪个文件、第几条、谁说的、什么时候」。
 //
-// 只在结构化输出里用（export --json / dump --jsonl），markdown 不碰。
+// 只在结构化输出里用（export --json / dump），markdown 不碰。
 // 文件名、分片序号、内容指纹三件一起给，下游才能既定位到原文，又能在重跑时
 // 判断这条是不是上次已经收过。
 import { createHash } from 'node:crypto';
@@ -24,15 +24,39 @@ export function stampOf(m) {
 }
 
 /**
+ * 时间原文换算成毫秒。给「程序要拿时间排序 / 算差值」的地方用，展示仍用 fmtTime。
+ * HH:MM 这种没有日期的算不出来，返回 null 而不是补一个今天的日期；调用方据此
+ * 决定省略这个字段，别把假时间喂给下游。
+ *
+ * 结果一律取整：有的源自带小数毫秒（文件 mtime 是浮点，实测拿到过
+ * 1795075120835.4502），小数部分对排序没有任何用处，还会让下游以为这不是时间戳。
+ */
+export function epochOf(value) {
+  const raw = typeof value === 'number' ? value : parseEpoch(value);
+  return Number.isFinite(raw) ? Math.round(raw) : null;
+}
+
+function parseEpoch(value) {
+  const s = String(value == null ? '' : value).trim();
+  if (!s) return null;
+  if (/^\d{11,}$/.test(s)) return Number(s);
+  if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(s)) return null;
+  const ms = new Date(s).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
  * 一条消息的定位字段。正文与 chars 由调用方补，body 传进来时按实际的
  * 输出正文（可能已脱敏）算长度。
+ *
+ * 没有 family：Codex 的 fork 分片跟父线程共用同一个 session_id，归组用的就是它，
+ * 「会话」和「家族」永远是同一个值。留一个恒等的字段只会让下游以为能分两层。
  */
-export function messageRecord({ source, session, family, shard, shardIndex, shardCount, index, message, body }) {
+export function messageRecord({ source, session, shard, shardIndex, shardCount, index, message, body }) {
   const text = body == null ? String(message.body || '') : String(body);
   const rec = {
     source: source || '',
     session: session || '',
-    family: family || session || '',
     msg_index: index,
     role: machineRole(message.role),
     speaker: displayRole(message.role),

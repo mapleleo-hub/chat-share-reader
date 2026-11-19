@@ -39,7 +39,7 @@ node skills/chat-share-reader/scripts/sessions.mjs search "关键词" --cwd 项�
 node skills/chat-share-reader/scripts/sessions.mjs export                 # 当前会话
 node skills/chat-share-reader/scripts/sessions.mjs export <id> --stdout
 node skills/chat-share-reader/scripts/sessions.mjs export <id> --json
-node skills/chat-share-reader/scripts/sessions.mjs dump --jsonl --since 7d
+node skills/chat-share-reader/scripts/sessions.mjs dump --since 7d
 node skills/chat-share-reader/scripts/sessions.mjs dump --json --since 2026-11-01 --out all.jsonl
 ```
 
@@ -51,7 +51,7 @@ node skills/chat-share-reader/scripts/sessions.mjs dump --json --since 2026-11-0
 
 `--json` 与 `dump` 的结构化输出里，角色分两个字段：`role` 只有 `user` / `assistant` / `tool` / `system` 四个值，与界面语言、模型名无关，下游判说话人用这个；`speaker` 是显示名，会随语言和模型名变。每条消息还带 `session`、`shard`、`msg_index`、`ts` 和 `hash`（正文指纹），可以锚定到「第几条」，也能在重跑时判重。
 
-`dump` 一次跑完全部会话：`--jsonl` 一条消息一行、`--json` 一场会话一行，`--since` 按文件 mtime 做增量。Codex 的 `guardian_review` 审批子会话整份只有审批回执，解析前就按类型跳过。归组按 `session_meta.session_id`，父子分片不会重复计数。
+`dump` 一次跑完全部会话：默认一条消息一行，`--json` 改成一场会话一行、消息嵌在记录里；`--since` 按对话时间做增量（文件名里的时间戳优先，没有才退回 mtime）。`list --json` 与 `search --json` 的时间给两个字段，`ts` 是毫秒用于排序，`time` 是展示写法。Codex 的 `guardian_review` 审批子会话整份只有审批回执，解析前就按类型跳过。归组按 `session_meta.session_id`，父子分片不会重复计数。
 
 ## 脱敏
 

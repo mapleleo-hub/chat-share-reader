@@ -78,7 +78,7 @@ node skills/chat-share-reader/scripts/sessions.mjs search "keyword"
 node skills/chat-share-reader/scripts/sessions.mjs export              # the session you are in right now
 node skills/chat-share-reader/scripts/sessions.mjs export <id-prefix> --stdout
 node skills/chat-share-reader/scripts/sessions.mjs export <id-prefix> --json
-node skills/chat-share-reader/scripts/sessions.mjs dump --jsonl --since 7d
+node skills/chat-share-reader/scripts/sessions.mjs dump --since 7d
 node skills/chat-share-reader/scripts/sessions.mjs dump --json --since 2026-11-01 --out all.jsonl
 ```
 
@@ -86,7 +86,7 @@ node skills/chat-share-reader/scripts/sessions.mjs dump --json --since 2026-11-0
 
 `export --stdout` pipes straight into another agent, which is the fastest way to carry a previous conversation's context forward.
 
-`dump` exports everything in one process instead of one call per session: `--jsonl` writes one message per line, `--json` writes one session per line, `--since` filters by file mtime. Each record carries `source`, `session`, `shard`, `msg_index`, `ts` and a content `hash`, and `role` is always one of `user`, `assistant`, `tool`, `system` regardless of UI language or model name (`speaker` holds the display name). Codex `guardian_review` approval subsessions contain no conversation and are skipped by type before parsing.
+`dump` exports everything in one process instead of one call per session: one message per line by default, `--json` switches to one session per line with messages nested inside, `--since` filters by conversation time (the timestamp in the filename wins, file mtime is only the fallback for sources that have none). Each record carries `source`, `session`, `shard`, `msg_index`, `ts` and a content `hash`, and `role` is always one of `user`, `assistant`, `tool`, `system` regardless of UI language or model name (`speaker` holds the display name). `list --json` and `search --json` report time as a pair: `ts` in milliseconds for sorting, `time` for display. Codex `guardian_review` approval subsessions contain no conversation and are skipped by type before parsing.
 
 ## Redaction
 

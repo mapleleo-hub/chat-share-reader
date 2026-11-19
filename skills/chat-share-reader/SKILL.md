@@ -117,7 +117,7 @@ node scripts/sessions.mjs search <关键词> [--limit 20] [--cwd 子串]
 node scripts/sessions.mjs export [<id 前缀或路径>] [--current] [--stdout] [--full] [--json]
 node scripts/sessions.mjs export --redact off            # 要完整原文时
 node scripts/sessions.mjs export --redact strict         # 额外遮邮箱、令牌、内网 IP
-node scripts/sessions.mjs dump --jsonl --since 7d        # 批量导出，一条消息一行
+node scripts/sessions.mjs dump --since 7d                 # 批量导出，默认一条消息一行
 node scripts/sessions.mjs dump --json --since 2026-11-01 --out all.jsonl
 
 # 得到笔记账号内录音笔记批量导出（要 opencli 取登录态）
@@ -267,34 +267,38 @@ node scripts/sessions.mjs export <路径> --full         # 带上思考与工具
 
 归一化在 `lib/roles.mjs`：解析器写「用户」或 `user` 算用户发言，其余一律算 `assistant`，工具与系统只认显式列出的名字。新增解析器沿用这个约定即可，不用改映射表。
 
-每条消息带定位字段，`export --json` 与 `dump --jsonl` 形状一致：
+每条消息带定位字段，`export --json` 与 `dump` 的形状一致：
 
 | 字段 | 含义 |
 | --- | --- |
 | `source` | 来源名（`codex`、`workbuddy` …） |
-| `session` / `family` | 会话线程 id。一场对话只有一个，父子分片相同 |
+| `session` | 会话线程 id。一场对话只有一个，父子分片相同，按它计数才等于会话数 |
 | `shard` | 这条消息出自哪个文件 |
 | `shard_index` / `shard_count` | 分片序号与总数，只有多分片时才出现 |
 | `shard_type` | 分片自己的类型（`user` / `subagent`），说明这句是主对话还是子代理说的 |
 | `msg_index` | 在这条导出流里的序号，从 0 开始，同一场会话内连续 |
-| `ts` | 消息时间，有 ISO 给 ISO，只有 `HH:MM` 就原样给，不补假日期；工具消息没有时间时给空串，顺序看 `msg_index` |
+| `ts` | 消息时间原文：有 ISO 给 ISO，只有 `HH:MM` 就原样给，不补假日期；工具消息没有时间时给空串，顺序看 `msg_index`。这**不是**数值时间戳，排序请用 `msg_index` 或先过 `lib/provenance.mjs` 的 `epochOf` |
 | `hash` | 正文指纹（sha256 前 16 位，空白归一化后算）。按原文算，换脱敏档位重跑指纹不变 |
 | `chars` / `body` | 导出正文长度与正文（受脱敏档位影响） |
 
 定位到「第几条」用 `session` + `msg_index`；判重跑用 `hash`；想回到原文就按 `shard` 打开对应文件。
+
+0.7.0 起不再输出 `family`：Codex 的 fork 分片跟父线程共用同一个 `session_id`，归组用的就是它，「会话」和「家族」永远同值，留一个恒等字段只会让人以为能分两层。原来按 `family` 分组的下游改成按 `session`。
+
+`list --json` 与 `search --json` 的时间给两个字段：`ts` 是毫秒（可以排序、算差值），`time` 是同一时刻的展示写法。`search` 的消息级命中一般也给 `ts`；解析器只给了 `HH:MM` 那种缺日期的值时不输出 `ts`，因为补一个今天的日期就是假数据。
 
 ### 批量导出（dump）
 
 `dump` 一次处理全部会话，不逐场起进程：
 
 ```bash
-dump --jsonl                       # 一条消息一行，流式输出，内存不涨
+dump                               # 默认一条消息一行，流式输出，内存不涨
 dump --json --out all.jsonl        # 一场会话一行，messages 嵌在记录里
 dump --since 7d                    # 只要对话时间在 7 天内的（也认 2026-11-01 / 24h / 90m / 毫秒）
 dump --source codex --skip-types guardian_review
 ```
 
-归组口径：一场会话一个 `family`，父子分片合并成一条消息流。Codex 的 fork 会把父线程历史整段复制进新文件，140 个文件可能只是 86 场对话，按文件计数必然多算。分片信息不掉，标在每条记录的 `shard` / `shard_index` 上。
+归组口径：一场会话一个 `session`，父子分片合并成一条消息流。Codex 的 fork 会把父线程历史整段复制进新文件，140 个文件可能只是 86 场对话，按文件计数必然多算。分片信息不掉，标在每条记录的 `shard` / `shard_index` 上。
 
 `--since` 按对话时间判：文件名里的时间戳优先（Codex 的 `rollout-<时间>-<id>`），没有时间戳的源退回文件 mtime；SQLite 源直接用会话时间。纯日期按本地零点算，跟 `2026-11-01T10:30` 一个口径。`--out` 不写文件时走 stdout，被 `| head` 截断不报错。
 

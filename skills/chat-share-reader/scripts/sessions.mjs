@@ -7,7 +7,7 @@
 //   node sessions.mjs search <关键词> [--source ...] [--limit 20] [--cwd <子串>] [--json]
 //   node sessions.mjs export [<会话 id 或文件路径>] [--current] [--out DIR] [--stdout] [--full]
 //                            [--json] [--redact off|home|strict] [--within 分钟]
-//   node sessions.mjs dump   [--jsonl|--json] [--source ...] [--since <日期|7d|毫秒>] [--out FILE]
+//   node sessions.mjs dump   [--json] [--source ...] [--since <日期|7d|毫秒>] [--out FILE]
 //                            [--full] [--redact ...] [--skip-types a,b]
 //
 // export 不给目标时导当前会话：先认宿主 agent 的会话标识环境变量，
@@ -36,7 +36,7 @@ import { buildDoc, safeName, normalizeMessages } from './lib/md.mjs';
 import { expandShards, stitchMessages, dedupeShards } from './lib/merge.mjs';
 import { createRedactor } from './lib/redact.mjs';
 import { t, role as rn } from './lib/i18n.mjs';
-import { messageRecord, parseSince } from './lib/provenance.mjs';
+import { epochOf, messageRecord, parseSince, stampOf } from './lib/provenance.mjs';
 import { machineRole } from './lib/roles.mjs';
 
 // CSR_HOME 只给测试用：把各个源的根目录指到一个假家目录里，才能用真文件跑回归。
@@ -161,7 +161,8 @@ function idOfFile(file) {
 }
 
 // Codex 的 fork 分片名形如 `<父线程>_<新线程>.jsonl`，父线程 id 是第一个 UUID。
-// 合并一个会话的所有分片时要按它归组。
+// 用户敲的可能是父线程 id，所以 export 匹配时两个都要认。它只做匹配键，
+// 不进输出记录：会话归组用的是 session_meta.session_id，跟这个值同源。
 function familyOfFile(file) {
   const base = path.basename(file).replace(/\.jsonl(\.zst)?$/i, '');
   const m = base.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
@@ -370,7 +371,6 @@ function parseArgs(argv) {
     redact: 'home',
     within: 60,
     since: '',
-    jsonl: false,
     skipTypes: [...DEFAULT_SKIP_TYPES].join(','),
     noSkip: false,
     limitSet: false,
@@ -393,7 +393,11 @@ function parseArgs(argv) {
     else if (a === '--no-redact') opts.redact = 'off';
     else if (a === '--within') opts.within = Number(rest[++i]) || 60;
     else if (a === '--since') opts.since = rest[++i] || '';
-    else if (a === '--jsonl') opts.jsonl = true;
+    // --jsonl 是默认行为的老写法，留着只为不打断旧脚本。它不改变任何东西，
+    // 也不存状态：真正切换输出形状的是 --json。别把它写进帮助里当并列模式。
+    else if (a === '--jsonl') {
+      /* 等同默认，无副作用 */
+    }
     else if (a === '--skip-types') opts.skipTypes = rest[++i] || '';
     else if (a === '--no-skip') opts.noSkip = true;
     else positional.push(a);
@@ -421,6 +425,8 @@ async function cmdList(opts, names) {
         items.map((x) => ({
           source: x.name,
           id: x.id || idOfFile(x.ref),
+          // ts 是毫秒，给程序排序 / 算差值；time 是同一时刻的展示写法。
+          ts: epochOf(x.time),
           time: fmtTime(x.time),
           title: x.title || t('(无标题)', '(untitled)'),
           count: x.count,
@@ -601,21 +607,32 @@ async function cmdSearch(keyword, opts, names) {
   }
 
   if (opts.json) {
+    // 时间有两个字段：ts 是毫秒，给程序排序和算差值；time 是同一时刻的展示写法。
+    // 会话级的时间一定能算成毫秒，消息级不一定（见下）。
+    const atOf = (h) => h.startedAt || h.time;
     return console.log(
       JSON.stringify(
         hits.map((h) => ({
           source: h.source,
           id: h.id,
           title: h.title,
-          time: fmtTime(h.startedAt || h.time),
+          ts: epochOf(atOf(h)),
+          time: fmtTime(atOf(h)),
           cwd: (h.meta && h.meta.cwd) || '',
           ref: h.file || h.ref,
-          matched: h.matched.map((m) => ({
-            role: machineRole(m.role),
-            speaker: rn(m.role),
-            time: m.time,
-            snippet: snippet(m.body, keyword),
-          })),
+          matched: h.matched.map((m) => {
+            // 原来直接给 m.time，Codex 那边是 '23:19' 这种只有时分的值，没有日期，
+            // 跨天既不能排序也不能比大小。改走 stampOf：解析器给了 ISO 就用 ISO。
+            // 变量不叫 t：t 是本文件的翻译函数，别在这里把它遮掉。
+            const stamp = stampOf(m);
+            const ms = epochOf(stamp);
+            const rec = { role: machineRole(m.role), speaker: rn(m.role) };
+            // 只有时分算不出绝对值，补今天的日期就是造假，干脆不给这个字段。
+            if (ms != null) rec.ts = ms;
+            rec.time = stamp;
+            rec.snippet = snippet(m.body, keyword);
+            return rec;
+          }),
         })),
         null,
         2
@@ -841,9 +858,9 @@ async function cmdExport(target, opts, names) {
   );
 }
 
-// 批量导出：一场会话一个 family，流式往外写、不在内存里攒。
+// 批量导出：一场会话一条流，流式往外写、不在内存里攒。
 //
-// 为什么按 family 归组而不是一个文件一条：Codex 的 fork 会把父线程的历史整段复制
+// 为什么按会话归组而不是一个文件一条：Codex 的 fork 会把父线程的历史整段复制
 // 进新文件，逐个文件导会让同一句话出现多遍。归组键用文件里的线程 id
 // （session_meta.session_id），不用文件名，因为分片名用的是新 id。跟 export 一致：
 // 同一场对话无论拆分几个文件，导出结果里只出现一次，分片信息标在每条记录上。
@@ -983,7 +1000,6 @@ async function cmdDump(opts, names) {
       ...messageRecord({
         source: g.source,
         session: g.session,
-        family: g.session,
         shard: m.shard || shards[0].file || String(shards[0].ref),
         shardIndex: m.shardIndex || 0,
         shardCount: shards.length,
@@ -1000,7 +1016,6 @@ async function cmdDump(opts, names) {
       await write({
         kind: 'session',
         source: g.source,
-        family: g.session,
         session: g.session,
         session_type: g.type || '',
         shards: shards.map((s) => s.file || String(s.ref)),
@@ -1069,11 +1084,12 @@ try {
         '  node sessions.mjs search <关键词> [--source ...] [--limit 20] [--cwd <子串>] [--json]\n' +
         '  node sessions.mjs export [<id 或路径>] [--current] [--out DIR] [--stdout] [--full] [--json]\n' +
         '                          [--redact off|home|strict] [--within 60]\n' +
-        '  node sessions.mjs dump [--jsonl|--json] [--source <名字>|all] [--since 2026-11-01|7d] [--out FILE]\n' +
+        '  node sessions.mjs dump [--json] [--source <名字>|all] [--since 2026-11-01|7d] [--out FILE]\n' +
         '                        [--full] [--redact off|home|strict] [--skip-types guardian_review] [--no-skip]\n' +
         '\n' +
         'export 不给目标时导当前会话（认宿主 agent 的会话标识，认不出按工作目录 + 最近活跃挑）。\n' +
-        'dump 批量导全部会话：--jsonl 一条消息一行，--json 一场会话一行；--since 按文件 mtime 增量。\n' +
+        'dump 批量导全部会话：默认一条消息一行（--jsonl 是它的旧别名，仍接受），--json 一场会话一行；\n' +
+        '--since 按对话时间，纯日期按本地零点算。\n' +
         '脱敏默认 home：家目录换成 ~，strict 再遮邮箱、令牌、内网 IP，off 导出原文。'
     );
     process.exit(2);
