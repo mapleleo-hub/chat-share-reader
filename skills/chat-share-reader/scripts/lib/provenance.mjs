@@ -61,7 +61,11 @@ export function parseSince(value, now = Date.now()) {
     return now - Number(rel[1]) * unit;
   }
   if (/^\d{11,}$/.test(s)) return Number(s);
-  const ms = new Date(s).getTime();
+  // 纯日期补本地零点再解析。ES 规范里 `new Date('2026-11-01')` 是 UTC 午夜，
+  // 而 `new Date('2026-11-01T10:30')` 是本地时间，同一份代码两种口径：本机 UTC+8，
+  // `--since 2026-11-01` 实际从本地 08:00 起算，当天 00:00–08:00 的会话全被漏掉。
+  // 用户说的是本地日历日，两种写法统一按本地。
+  const ms = new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? s + 'T00:00' : s).getTime();
   if (!Number.isFinite(ms)) throw new Error('看不懂这个时间：' + s + '（要 2026-11-01、7d、24h 或毫秒时间戳）');
   return ms;
 }

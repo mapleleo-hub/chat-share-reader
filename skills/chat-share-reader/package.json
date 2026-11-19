@@ -1,6 +1,6 @@
 {
   "name": "chat-share-reader",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Export AI chat conversations (ChatGPT, Claude, Gemini, Grok, Perplexity, DeepSeek, Kimi, Qwen) and 15 local agent session stores (Claude Code, Codex, Cursor, opencode) to markdown. 把 AI 对话与得到笔记导出为 markdown，默认脱敏。",
   "type": "module",
   "bin": {

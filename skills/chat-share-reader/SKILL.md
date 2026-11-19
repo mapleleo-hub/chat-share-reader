@@ -290,13 +290,13 @@ node scripts/sessions.mjs export <路径> --full         # 带上思考与工具
 ```bash
 dump --jsonl                       # 一条消息一行，流式输出，内存不涨
 dump --json --out all.jsonl        # 一场会话一行，messages 嵌在记录里
-dump --since 7d                    # 只要 mtime 在 7 天内变动过的（也认 2026-11-01 / 24h / 90m / 毫秒）
+dump --since 7d                    # 只要对话时间在 7 天内的（也认 2026-11-01 / 24h / 90m / 毫秒）
 dump --source codex --skip-types guardian_review
 ```
 
 归组口径：一场会话一个 `family`，父子分片合并成一条消息流。Codex 的 fork 会把父线程历史整段复制进新文件，140 个文件可能只是 86 场对话，按文件计数必然多算。分片信息不掉，标在每条记录的 `shard` / `shard_index` 上。
 
-`--since` 按文件 mtime 判（SQLite 源没有文件，用会话时间），增量备份靠它；`--out` 不写文件时走 stdout，被 `| head` 截断不报错。
+`--since` 按对话时间判：文件名里的时间戳优先（Codex 的 `rollout-<时间>-<id>`），没有时间戳的源退回文件 mtime；SQLite 源直接用会话时间。纯日期按本地零点算，跟 `2026-11-01T10:30` 一个口径。`--out` 不写文件时走 stdout，被 `| head` 截断不报错。
 
 退出码：0 表示跑完（允许有跳过），1 表示参数错或全部失败。汇总写在 stderr，stdout 只有数据，可以直接进管道。
 

@@ -45,7 +45,11 @@ test('时间戳有 ISO 用 ISO，只有时分就原样给，不补假日期', ()
 test('parseSince 认日期、相对量与毫秒，认不出报错', () => {
   const now = Date.parse('2026-11-13T00:00:00Z');
   assert.equal(parseSince(''), 0);
-  assert.equal(parseSince('2026-11-01'), Date.parse('2026-11-01T00:00:00Z'));
+  // 纯日期按本地零点，不按 UTC 午夜。ES 规范里 `new Date('2026-11-01')` 是 UTC，
+  // 而带时间的写法又是本地，本机 UTC+8 下两者差 8 小时：按 UTC 算，--since
+  // 2026-11-01 会漏掉当天本地 00:00–08:00 的会话。用本地构造取值，免时区依赖。
+  assert.equal(parseSince('2026-11-01'), new Date(2026, 10, 1).getTime());
+  assert.equal(parseSince('2026-11-01T10:30'), new Date(2026, 10, 1, 10, 30).getTime());
   assert.equal(parseSince('7d', now), now - 7 * 86400000);
   assert.equal(parseSince('24h', now), now - 24 * 3600000);
   assert.equal(parseSince('90m', now), now - 90 * 60000);

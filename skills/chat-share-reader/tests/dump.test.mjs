@@ -23,6 +23,7 @@ const PARENT = '01a1af92-aaaa-4bbb-8ccc-000000000001';
 const FORK = '01a1af92-aaaa-4bbb-8ccc-000000000002';
 const GUARDIAN = '01a1af92-aaaa-4bbb-8ccc-000000000003';
 const OLD = '01a1af92-aaaa-4bbb-8ccc-000000000004';
+const STALE = '01a1af92-aaaa-4bbb-8ccc-000000000005';
 
 const ev = (obj) => JSON.stringify(obj);
 
@@ -192,7 +193,7 @@ test('dump 默认按类型跳过 guardian_review，导出时说明原因', async
   }
 });
 
-test('dump --since 按 mtime 增量，旧会话不出现', async () => {
+test('dump --since 按对话时间增量，旧会话不出现', async () => {
   const f = await fixture();
   try {
     const blocked = await cli(f.home, ['dump', '--jsonl', '--source', 'codex', '--since', '2026-01-01']);
@@ -205,6 +206,33 @@ test('dump --since 按 mtime 增量，旧会话不出现', async () => {
     const bad = await cli(f.home, ['dump', '--jsonl', '--since', '上个月']);
     assert.equal(bad.code, 1);
     assert.ok(bad.stderr.includes('看不懂'), bad.stderr);
+  } finally {
+    await rm(f.home, { recursive: true, force: true });
+  }
+});
+
+test('dump --since 不把「刚被重新解压的旧对话」当成新会话', async () => {
+  // Codex 归档是 rollout-*.jsonl.zst，重新解压一次 mtime 就变成解压时间，
+  // 而对话本身还是很久以前的。按 mtime 过滤会把它当成新会话收进来——
+  // 本机实测 --since 7d 唯一一条命中就是这种假阳性（25 天前的对话，mtime 在两天前）。
+  const f = await fixture();
+  try {
+    const stale = path.join(f.dir, `rollout-2020-01-02T10-00-00-${STALE}.jsonl`);
+    await writeFile(
+      stale,
+      [meta(STALE), msg('UserMessage', '刚被重新解压的旧对话', '2020-01-02T02:00:01.000Z')].join('\n') + '\n',
+      'utf8'
+    );
+    const now = new Date();
+    await utimes(stale, now, now);
+
+    const r = await cli(f.home, ['dump', '--jsonl', '--source', 'codex', '--since', '2026-11-01']);
+    assert.ok(!r.stdout.includes('刚被重新解压的旧对话'), 'mtime 新但对话旧的文件不该进 --since 窗口');
+    assert.ok(r.stdout.includes('第一句提问'));
+
+    // 但窗口放开时应当照常导出，不是被永久丢掉
+    const all = await cli(f.home, ['dump', '--jsonl', '--source', 'codex', '--since', '2000-01-01']);
+    assert.ok(all.stdout.includes('刚被重新解压的旧对话'));
   } finally {
     await rm(f.home, { recursive: true, force: true });
   }

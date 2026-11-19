@@ -862,8 +862,11 @@ async function cmdDump(opts, names) {
   );
   const limit = opts.limitSet ? opts.limit : 1000000;
   const all = await discover(names, limit);
-  // 没有文件的源（SQLite）没有 mtime，用会话自己的时间
-  const items = since ? all.filter((it) => (it.mtime || it.time || 0) >= since) : all;
+  // 按对话时间过滤，不按 mtime：Codex 归档是 .jsonl.zst，mtime 是解压时间，
+  // 重新解压一次旧对话就会被当成新会话收进来（本机实测 --since 7d 只命中 1 个
+  // 回解压的 25 天前会话）。it.time 已经是 `timeFromName || mtime`，mtime 兜底
+  // 在 discover 里做过了，这里再优先取 mtime 就是把兜底顶掉了。
+  const items = since ? all.filter((it) => (it.time || it.mtime || 0) >= since) : all;
 
   // 归组：JSONL 按线程 id 归，SQLite 每条本来就已经是一场会话
   const groups = new Map();
@@ -899,7 +902,9 @@ async function cmdDump(opts, names) {
       groups.set(key, g);
     }
     g.shards.push({ ...it, meta });
-    g.time = Math.max(g.time, it.time || 0, it.mtime || 0);
+    // 同样不掺 mtime：这个值决定 947 行输出时谁的会话排前面，掺进去的话，
+    // 一个被重新解压的老对话会顶到列表最上方。mtime 兜底在 discover 里做过一次。
+    g.time = Math.max(g.time, it.time || 0);
   }
 
   // 类型跟最早的分子走：父会话先建，fork 后建，先建的那个才是这场对话的类型

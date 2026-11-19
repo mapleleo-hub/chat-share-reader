@@ -1,4 +1,5 @@
 chat-shares/
+sessions/
 *.log
 node_modules/
 .chrome-profile/
